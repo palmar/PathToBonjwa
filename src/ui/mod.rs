@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
@@ -16,6 +18,21 @@ enum Tab {
     Charts,
     Analytics,
     Batch,
+    Logs,
+}
+
+#[derive(Clone)]
+struct LogEntry {
+    elapsed_secs: f64,
+    level: LogLevel,
+    message: String,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum LogLevel {
+    Info,
+    Warn,
+    Error,
 }
 
 pub struct App {
@@ -27,6 +44,10 @@ pub struct App {
     // Batch mode: multiple loaded replays
     batch_replays: Vec<BatchEntry>,
     batch_selected: Option<usize>,
+    // Client-side logging
+    log_entries: Vec<LogEntry>,
+    log_start: Instant,
+    log_auto_scroll: bool,
 }
 
 struct BatchEntry {
@@ -49,7 +70,8 @@ struct CachedAnalytics {
 
 impl Default for App {
     fn default() -> Self {
-        Self {
+        let start = Instant::now();
+        let mut app = Self {
             replay: None,
             error: None,
             dropped_file: None,
@@ -57,19 +79,48 @@ impl Default for App {
             cached: None,
             batch_replays: Vec::new(),
             batch_selected: None,
-        }
+            log_entries: Vec::new(),
+            log_start: start,
+            log_auto_scroll: true,
+        };
+        app.log(LogLevel::Info, "PathToBonjwa started");
+        app
+    }
+}
+
+impl App {
+    fn log(&mut self, level: LogLevel, message: impl Into<String>) {
+        self.log_entries.push(LogEntry {
+            elapsed_secs: self.log_start.elapsed().as_secs_f64(),
+            level,
+            message: message.into(),
+        });
     }
 }
 
 impl App {
     fn load_replay(&mut self, data: Vec<u8>) {
+        self.log(LogLevel::Info, format!("Parsing replay ({} bytes)", data.len()));
         match parser::parse_replay(&data) {
             Ok(replay) => {
+                self.log(
+                    LogLevel::Info,
+                    format!(
+                        "Replay parsed: {} — {} players, {} frames, {} commands",
+                        replay.matchup,
+                        replay.players.len(),
+                        replay.frames,
+                        replay.commands.len(),
+                    ),
+                );
+                self.log(LogLevel::Info, "Computing analytics...");
                 self.cached = Some(Self::compute_analytics(&replay));
+                self.log(LogLevel::Info, "Analytics computed");
                 self.replay = Some(replay);
                 self.error = None;
             }
             Err(e) => {
+                self.log(LogLevel::Error, format!("Parse error: {}", e));
                 self.replay = None;
                 self.cached = None;
                 self.error = Some(e);
@@ -78,13 +129,19 @@ impl App {
     }
 
     fn load_replay_batch(&mut self, filename: String, data: Vec<u8>) {
-        if let Ok(replay) = parser::parse_replay(&data) {
-            let cached = Self::compute_analytics(&replay);
-            self.batch_replays.push(BatchEntry {
-                filename,
-                replay,
-                cached,
-            });
+        match parser::parse_replay(&data) {
+            Ok(replay) => {
+                let cached = Self::compute_analytics(&replay);
+                self.log(LogLevel::Info, format!("Batch loaded: {}", filename));
+                self.batch_replays.push(BatchEntry {
+                    filename,
+                    replay,
+                    cached,
+                });
+            }
+            Err(e) => {
+                self.log(LogLevel::Warn, format!("Batch skip {}: {}", filename, e));
+            }
         }
     }
 
@@ -1043,6 +1100,65 @@ impl App {
     }
 }
 
+    fn render_logs(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.heading("Logs");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Clear").clicked() {
+                    self.log_entries.clear();
+                    self.log(LogLevel::Info, "Logs cleared");
+                }
+                if ui.button("Copy All").clicked() {
+                    let text: String = self
+                        .log_entries
+                        .iter()
+                        .map(|e| {
+                            let tag = match e.level {
+                                LogLevel::Info => "INFO",
+                                LogLevel::Warn => "WARN",
+                                LogLevel::Error => "ERR ",
+                            };
+                            format!("[{:>8.2}s] {} {}", e.elapsed_secs, tag, e.message)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    ui.output_mut(|o| o.copied_text = text);
+                }
+                ui.checkbox(&mut self.log_auto_scroll, "Auto-scroll");
+            });
+        });
+        ui.separator();
+
+        let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 2.0;
+        let num_rows = self.log_entries.len();
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .stick_to_bottom(self.log_auto_scroll)
+            .show_rows(ui, row_height, num_rows, |ui, row_range| {
+                for i in row_range {
+                    let entry = &self.log_entries[i];
+                    let (tag, color) = match entry.level {
+                        LogLevel::Info => ("INFO", egui::Color32::from_rgb(180, 180, 180)),
+                        LogLevel::Warn => ("WARN", egui::Color32::from_rgb(255, 200, 50)),
+                        LogLevel::Error => ("ERR ", egui::Color32::from_rgb(255, 100, 100)),
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "[{:>8.2}s] {} {}",
+                                entry.elapsed_secs, tag, entry.message
+                            ))
+                            .monospace()
+                            .color(color),
+                        );
+                    });
+                }
+            });
+    }
+}
+
 fn escape_csv(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') {
         format!("\"{}\"", s.replace('"', "\"\""))
@@ -1067,6 +1183,7 @@ impl eframe::App for App {
         });
 
         if let Some(data) = self.dropped_file.take() {
+            self.log(LogLevel::Info, format!("File dropped ({} bytes)", data.len()));
             self.load_replay(data);
         }
 
@@ -1079,10 +1196,13 @@ impl eframe::App for App {
                         .add_filter("BW Replay", &["rep"])
                         .pick_file()
                     {
+                        self.log(LogLevel::Info, format!("Opening file: {}", path.display()));
                         match std::fs::read(&path) {
                             Ok(data) => self.load_replay(data),
                             Err(e) => {
-                                self.error = Some(format!("Failed to read file: {}", e));
+                                let msg = format!("Failed to read file: {}", e);
+                                self.log(LogLevel::Error, &msg);
+                                self.error = Some(msg);
                                 self.replay = None;
                                 self.cached = None;
                             }
@@ -1118,18 +1238,26 @@ impl eframe::App for App {
                         self.active_tab = Tab::Analytics;
                     }
                 }
-                // Batch tab always available
+                // Batch and Logs tabs always available
                 if ui
                     .selectable_label(self.active_tab == Tab::Batch, "Batch")
                     .clicked()
                 {
                     self.active_tab = Tab::Batch;
                 }
+                if ui
+                    .selectable_label(self.active_tab == Tab::Logs, "Logs")
+                    .clicked()
+                {
+                    self.active_tab = Tab::Logs;
+                }
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.active_tab == Tab::Batch {
+            if self.active_tab == Tab::Logs {
+                self.render_logs(ui);
+            } else if self.active_tab == Tab::Batch {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.render_batch(ui);
                 });
@@ -1147,7 +1275,7 @@ impl eframe::App for App {
                     Tab::Stats => self.render_stats(ui, &replay),
                     Tab::Charts => self.render_charts(ui, &replay),
                     Tab::Analytics => self.render_analytics(ui, &replay),
-                    Tab::Batch => {} // handled above
+                    Tab::Batch | Tab::Logs => {} // handled above
                 });
             } else {
                 self.render_welcome(ui);
