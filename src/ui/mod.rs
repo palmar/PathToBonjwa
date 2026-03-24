@@ -1098,7 +1098,6 @@ impl App {
             }
         }
     }
-}
 
     fn render_logs(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
