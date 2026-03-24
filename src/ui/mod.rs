@@ -100,7 +100,10 @@ impl App {
 
 impl App {
     fn load_replay(&mut self, data: Vec<u8>) {
-        self.log(LogLevel::Info, format!("Parsing replay ({} bytes)", data.len()));
+        self.log(
+            LogLevel::Info,
+            format!("Parsing replay ({} bytes)", data.len()),
+        );
         match parser::parse_replay(&data) {
             Ok(replay) => {
                 self.log(
@@ -1122,7 +1125,7 @@ impl App {
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
-                    ui.output_mut(|o| o.copied_text = text);
+                    ui.ctx().copy_text(text);
                 }
                 ui.checkbox(&mut self.log_auto_scroll, "Auto-scroll");
             });
@@ -1182,7 +1185,10 @@ impl eframe::App for App {
         });
 
         if let Some(data) = self.dropped_file.take() {
-            self.log(LogLevel::Info, format!("File dropped ({} bytes)", data.len()));
+            self.log(
+                LogLevel::Info,
+                format!("File dropped ({} bytes)", data.len()),
+            );
             self.load_replay(data);
         }
 
