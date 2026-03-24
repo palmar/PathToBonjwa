@@ -1,8 +1,14 @@
 [package]
 name = "pathtobonjwa"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Brood War replay analyzer — helping players improve through data-driven insights"
 license = "MIT"
 
 [dependencies]
+eframe = "0.31"
+egui_plot = "0.31"
+rfd = "0.15"
+byteorder = "1"
+chrono = "0.4"
+flate2 = "1"
