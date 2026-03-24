@@ -1,7 +1,10 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
-use crate::analytics::{self, ApmData, BuildOrderEntry, HotkeyStats, UnitCount};
+use crate::analytics::{
+    self, ApmData, BuildOrderEntry, HotkeyStats, IdleAnalysis, ResourceEstimate, SupplyCurve,
+    UnitCount, UnitProductionSpan,
+};
 use crate::parser::{self, Replay};
 
 // ─── App state ───────────────────────────────────────────────────────────────
@@ -11,6 +14,8 @@ enum Tab {
     Summary,
     Stats,
     Charts,
+    Analytics,
+    Batch,
 }
 
 pub struct App {
@@ -18,15 +23,28 @@ pub struct App {
     error: Option<String>,
     dropped_file: Option<Vec<u8>>,
     active_tab: Tab,
-    // Cached analytics (computed once per replay load)
     cached: Option<CachedAnalytics>,
+    // Batch mode: multiple loaded replays
+    batch_replays: Vec<BatchEntry>,
+    batch_selected: Option<usize>,
+}
+
+struct BatchEntry {
+    filename: String,
+    replay: Replay,
+    cached: CachedAnalytics,
 }
 
 struct CachedAnalytics {
-    apm_data: Vec<(u8, String, ApmData)>, // (player_id, name, data)
+    apm_data: Vec<(u8, String, ApmData)>,
     build_orders: Vec<(u8, String, Vec<BuildOrderEntry>)>,
     unit_counts: Vec<(u8, String, Vec<UnitCount>)>,
     hotkey_stats: Vec<(u8, String, HotkeyStats)>,
+    // Phase 3
+    supply_curves: Vec<(u8, String, SupplyCurve)>,
+    production_spans: Vec<(u8, String, Vec<UnitProductionSpan>)>,
+    resource_estimates: Vec<(u8, String, ResourceEstimate)>,
+    idle_analyses: Vec<(u8, String, IdleAnalysis)>,
 }
 
 impl Default for App {
@@ -37,6 +55,8 @@ impl Default for App {
             dropped_file: None,
             active_tab: Tab::Summary,
             cached: None,
+            batch_replays: Vec::new(),
+            batch_selected: None,
         }
     }
 }
@@ -57,27 +77,71 @@ impl App {
         }
     }
 
+    fn load_replay_batch(&mut self, filename: String, data: Vec<u8>) {
+        if let Ok(replay) = parser::parse_replay(&data) {
+            let cached = Self::compute_analytics(&replay);
+            self.batch_replays.push(BatchEntry {
+                filename,
+                replay,
+                cached,
+            });
+        }
+    }
+
     fn compute_analytics(replay: &Replay) -> CachedAnalytics {
         let mut apm_data = Vec::new();
         let mut build_orders = Vec::new();
         let mut unit_counts = Vec::new();
         let mut hotkey_stats = Vec::new();
+        let mut supply_curves = Vec::new();
+        let mut production_spans = Vec::new();
+        let mut resource_estimates = Vec::new();
+        let mut idle_analyses = Vec::new();
 
         for player in &replay.players {
             let pid = player.player_id;
             let name = player.name.clone();
 
-            let apm = analytics::compute_apm(&replay.commands, pid, replay.frames);
-            apm_data.push((pid, name.clone(), apm));
-
-            let bo = analytics::extract_build_order(&replay.commands, pid);
-            build_orders.push((pid, name.clone(), bo));
-
-            let uc = analytics::compute_unit_counts(&replay.commands, pid);
-            unit_counts.push((pid, name.clone(), uc));
-
-            let hs = analytics::compute_hotkey_stats(&replay.commands, pid);
-            hotkey_stats.push((pid, name, hs));
+            apm_data.push((
+                pid,
+                name.clone(),
+                analytics::compute_apm(&replay.commands, pid, replay.frames),
+            ));
+            build_orders.push((
+                pid,
+                name.clone(),
+                analytics::extract_build_order(&replay.commands, pid),
+            ));
+            unit_counts.push((
+                pid,
+                name.clone(),
+                analytics::compute_unit_counts(&replay.commands, pid),
+            ));
+            hotkey_stats.push((
+                pid,
+                name.clone(),
+                analytics::compute_hotkey_stats(&replay.commands, pid),
+            ));
+            supply_curves.push((
+                pid,
+                name.clone(),
+                analytics::compute_supply_curve(&replay.commands, pid, &player.race, replay.frames),
+            ));
+            production_spans.push((
+                pid,
+                name.clone(),
+                analytics::compute_production_spans(&replay.commands, pid),
+            ));
+            resource_estimates.push((
+                pid,
+                name.clone(),
+                analytics::compute_resource_estimate(&replay.commands, pid),
+            ));
+            idle_analyses.push((
+                pid,
+                name.clone(),
+                analytics::compute_idle_gaps(&replay.commands, pid, replay.frames, 5.0),
+            ));
         }
 
         CachedAnalytics {
@@ -85,6 +149,10 @@ impl App {
             build_orders,
             unit_counts,
             hotkey_stats,
+            supply_curves,
+            production_spans,
+            resource_estimates,
+            idle_analyses,
         }
     }
 
@@ -443,6 +511,543 @@ impl App {
                     plot_ui.line(line);
                 }
             });
+
+        // ─── Supply curve chart ──────────────────────────────────────────
+        ui.add_space(16.0);
+        ui.heading("Supply Over Time");
+        ui.separator();
+        ui.add_space(4.0);
+
+        Plot::new("supply_chart")
+            .height(plot_height)
+            .x_axis_label("Seconds")
+            .y_axis_label("Supply")
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                for (pid, name, curve) in &cached.supply_curves {
+                    let player = replay.players.iter().find(|p| p.player_id == *pid);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
+
+                    // Supply used line
+                    let used_points: PlotPoints =
+                        curve.points.iter().map(|&(t, used, _)| [t, used]).collect();
+                    plot_ui.line(
+                        Line::new(used_points)
+                            .name(format!("{} Used", name))
+                            .color(color)
+                            .width(2.0),
+                    );
+
+                    // Supply max line (dashed effect via lighter color)
+                    let max_points: PlotPoints =
+                        curve.points.iter().map(|&(t, _, max)| [t, max]).collect();
+                    let max_color =
+                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
+                    plot_ui.line(
+                        Line::new(max_points)
+                            .name(format!("{} Max", name))
+                            .color(max_color)
+                            .width(1.5),
+                    );
+                }
+            });
+
+        // ─── Resource spending chart ─────────────────────────────────────
+        ui.add_space(16.0);
+        ui.heading("Cumulative Resource Spending");
+        ui.separator();
+        ui.add_space(4.0);
+
+        Plot::new("resource_chart")
+            .height(plot_height)
+            .x_axis_label("Seconds")
+            .y_axis_label("Resources Spent")
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                for (pid, name, res) in &cached.resource_estimates {
+                    let player = replay.players.iter().find(|p| p.player_id == *pid);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
+
+                    // Minerals line
+                    let min_points: PlotPoints = res
+                        .spending_curve
+                        .iter()
+                        .map(|&(t, m, _)| [t, m as f64])
+                        .collect();
+                    plot_ui.line(
+                        Line::new(min_points)
+                            .name(format!("{} Minerals", name))
+                            .color(color)
+                            .width(2.0),
+                    );
+
+                    // Gas line (lighter)
+                    let gas_points: PlotPoints = res
+                        .spending_curve
+                        .iter()
+                        .map(|&(t, _, g)| [t, g as f64])
+                        .collect();
+                    let gas_color =
+                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 140);
+                    plot_ui.line(
+                        Line::new(gas_points)
+                            .name(format!("{} Gas", name))
+                            .color(gas_color)
+                            .width(1.5),
+                    );
+                }
+            });
+    }
+
+    fn render_analytics(&self, ui: &mut egui::Ui, replay: &Replay) {
+        let cached = match &self.cached {
+            Some(c) => c,
+            None => return,
+        };
+
+        ui.add_space(8.0);
+
+        // ─── Resource estimates ──────────────────────────────────────────
+        ui.heading("Resource Estimates");
+        ui.separator();
+        ui.add_space(4.0);
+
+        egui::Grid::new("resource_summary")
+            .num_columns(3)
+            .spacing([20.0, 6.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Player").strong());
+                ui.label(egui::RichText::new("Minerals Spent").strong());
+                ui.label(egui::RichText::new("Gas Spent").strong());
+                ui.end_row();
+
+                for (pid, name, res) in &cached.resource_estimates {
+                    let player = replay.players.iter().find(|p| p.player_id == *pid);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
+                    ui.label(egui::RichText::new(name).color(color).strong());
+                    ui.label(
+                        egui::RichText::new(format!("{}", res.total_minerals))
+                            .color(egui::Color32::from_rgb(0, 180, 255)),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", res.total_gas))
+                            .color(egui::Color32::from_rgb(0, 200, 80)),
+                    );
+                    ui.end_row();
+                }
+            });
+
+        // ─── Production timeline (Gantt-style) ──────────────────────────
+        ui.add_space(16.0);
+        ui.heading("Production Timeline");
+        ui.separator();
+        ui.add_space(4.0);
+
+        let game_duration = replay.duration_secs;
+
+        for (pid, name, spans) in &cached.production_spans {
+            let player = replay.players.iter().find(|p| p.player_id == *pid);
+            let color = player
+                .map(|p| p.color.to_egui())
+                .unwrap_or(egui::Color32::WHITE);
+
+            egui::CollapsingHeader::new(
+                egui::RichText::new(format!("{} ({} unit types)", name, spans.len()))
+                    .color(color)
+                    .strong(),
+            )
+            .default_open(true)
+            .show(ui, |ui| {
+                let available_width = ui.available_width().max(200.0);
+                let label_width = 120.0;
+                let bar_width = available_width - label_width - 80.0;
+
+                for span in spans {
+                    ui.horizontal(|ui| {
+                        let label_style = if span.is_building {
+                            egui::RichText::new(&span.unit_name)
+                                .color(egui::Color32::LIGHT_BLUE)
+                                .small()
+                        } else {
+                            egui::RichText::new(&span.unit_name).small()
+                        };
+                        ui.allocate_ui([label_width, 16.0].into(), |ui| {
+                            ui.label(label_style);
+                        });
+
+                        // Draw the Gantt bar
+                        let start_frac = span.first_time_secs / game_duration;
+                        let end_frac = span.last_time_secs / game_duration;
+                        let bar_start = start_frac as f32 * bar_width;
+                        let bar_end = (end_frac as f32 * bar_width).max(bar_start + 4.0);
+
+                        let (rect, _) =
+                            ui.allocate_exact_size([bar_width, 12.0].into(), egui::Sense::hover());
+
+                        let painter = ui.painter();
+                        // Background track
+                        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(40));
+                        // Active bar
+                        let bar_rect = egui::Rect::from_min_max(
+                            egui::pos2(rect.min.x + bar_start, rect.min.y),
+                            egui::pos2(rect.min.x + bar_end, rect.max.y),
+                        );
+                        painter.rect_filled(bar_rect, 2.0, color);
+
+                        // Count label
+                        ui.label(
+                            egui::RichText::new(format!("x{}", span.count))
+                                .small()
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+                }
+            });
+            ui.add_space(8.0);
+        }
+
+        // ─── Idle time / Macro gap analysis ─────────────────────────────
+        ui.add_space(8.0);
+        ui.heading("Idle Time / Macro Gaps");
+        ui.separator();
+        ui.add_space(4.0);
+
+        for (pid, name, idle) in &cached.idle_analyses {
+            let player = replay.players.iter().find(|p| p.player_id == *pid);
+            let color = player
+                .map(|p| p.color.to_egui())
+                .unwrap_or(egui::Color32::WHITE);
+
+            egui::CollapsingHeader::new(
+                egui::RichText::new(format!(
+                    "{} — {} gaps, {:.0}s total idle",
+                    name, idle.gap_count, idle.total_idle_secs
+                ))
+                .color(color)
+                .strong(),
+            )
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Longest gap:");
+                    ui.label(
+                        egui::RichText::new(format!("{:.1}s", idle.longest_gap_secs)).color(
+                            if idle.longest_gap_secs > 15.0 {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            } else {
+                                egui::Color32::GRAY
+                            },
+                        ),
+                    );
+                });
+
+                if !idle.gaps.is_empty() {
+                    egui::Grid::new(format!("idle_{}", pid))
+                        .num_columns(3)
+                        .spacing([16.0, 3.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("Start").strong());
+                            ui.label(egui::RichText::new("End").strong());
+                            ui.label(egui::RichText::new("Duration").strong());
+                            ui.end_row();
+
+                            for gap in idle.gaps.iter().take(20) {
+                                let start_m = (gap.start_secs / 60.0) as u32;
+                                let start_s = (gap.start_secs % 60.0) as u32;
+                                let end_m = (gap.end_secs / 60.0) as u32;
+                                let end_s = (gap.end_secs % 60.0) as u32;
+
+                                ui.label(
+                                    egui::RichText::new(format!("{}:{:02}", start_m, start_s))
+                                        .monospace()
+                                        .color(egui::Color32::GRAY),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("{}:{:02}", end_m, end_s))
+                                        .monospace()
+                                        .color(egui::Color32::GRAY),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("{:.1}s", gap.duration_secs))
+                                        .color(if gap.duration_secs > 10.0 {
+                                            egui::Color32::from_rgb(255, 100, 100)
+                                        } else if gap.duration_secs > 7.0 {
+                                            egui::Color32::YELLOW
+                                        } else {
+                                            egui::Color32::GRAY
+                                        }),
+                                );
+                                ui.end_row();
+                            }
+                            if idle.gaps.len() > 20 {
+                                ui.label("");
+                                ui.label("");
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "... and {} more",
+                                        idle.gaps.len() - 20
+                                    ))
+                                    .color(egui::Color32::GRAY),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                }
+            });
+            ui.add_space(8.0);
+        }
+
+        // ─── CSV Export button ───────────────────────────────────────────
+        ui.add_space(16.0);
+        ui.separator();
+        if ui.button("Export to CSV").clicked() {
+            self.export_csv(replay);
+        }
+    }
+
+    fn export_csv(&self, replay: &Replay) {
+        let cached = match &self.cached {
+            Some(c) => c,
+            None => return,
+        };
+
+        let csv = analytics::export_csv(
+            replay,
+            &cached.apm_data,
+            &cached.build_orders,
+            &cached.unit_counts,
+            &cached.resource_estimates,
+            &cached.idle_analyses,
+        );
+
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("CSV", &["csv"])
+            .set_file_name("replay_stats.csv")
+            .save_file()
+        {
+            let _ = std::fs::write(path, csv);
+        }
+    }
+
+    fn render_batch(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        ui.heading("Multi-Replay Batch View");
+        ui.separator();
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            if ui.button("Load Folder").clicked() {
+                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                    self.batch_replays.clear();
+                    self.batch_selected = None;
+                    if let Ok(entries) = std::fs::read_dir(&folder) {
+                        let mut rep_files: Vec<_> = entries
+                            .filter_map(|e| e.ok())
+                            .filter(|e| {
+                                e.path()
+                                    .extension()
+                                    .map(|ext| ext == "rep" || ext == "Rep" || ext == "REP")
+                                    .unwrap_or(false)
+                            })
+                            .collect();
+                        rep_files.sort_by_key(|e| e.file_name());
+
+                        for entry in &rep_files {
+                            if let Ok(data) = std::fs::read(entry.path()) {
+                                let filename = entry.file_name().to_string_lossy().to_string();
+                                self.load_replay_batch(filename, data);
+                            }
+                        }
+                    }
+                }
+            }
+            if !self.batch_replays.is_empty() {
+                ui.label(format!("{} replays loaded", self.batch_replays.len()));
+                if ui.button("Clear").clicked() {
+                    self.batch_replays.clear();
+                    self.batch_selected = None;
+                }
+            }
+        });
+
+        if self.batch_replays.is_empty() {
+            ui.add_space(40.0);
+            ui.vertical_centered(|ui| {
+                ui.label("Click 'Load Folder' to load all .rep files from a directory");
+            });
+            return;
+        }
+
+        ui.add_space(8.0);
+
+        // Batch summary table
+        egui::Grid::new("batch_table")
+            .num_columns(6)
+            .spacing([12.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("File").strong());
+                ui.label(egui::RichText::new("Map").strong());
+                ui.label(egui::RichText::new("Matchup").strong());
+                ui.label(egui::RichText::new("Duration").strong());
+                ui.label(egui::RichText::new("Date").strong());
+                ui.label(egui::RichText::new("").strong());
+                ui.end_row();
+
+                for (i, entry) in self.batch_replays.iter().enumerate() {
+                    let selected = self.batch_selected == Some(i);
+                    let text_color = if selected {
+                        egui::Color32::from_rgb(0, 200, 255)
+                    } else {
+                        egui::Color32::WHITE
+                    };
+
+                    ui.label(
+                        egui::RichText::new(&entry.filename)
+                            .color(text_color)
+                            .small(),
+                    );
+                    ui.label(
+                        egui::RichText::new(&entry.replay.map_name)
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
+                    ui.label(egui::RichText::new(&entry.replay.matchup).small());
+                    let mins = (entry.replay.duration_secs / 60.0) as u32;
+                    let secs = (entry.replay.duration_secs % 60.0) as u32;
+                    ui.label(
+                        egui::RichText::new(format!("{}:{:02}", mins, secs))
+                            .monospace()
+                            .small(),
+                    );
+                    let dt = chrono::DateTime::from_timestamp(entry.replay.timestamp, 0);
+                    let date_str = match dt {
+                        Some(d) => d.format("%Y-%m-%d").to_string(),
+                        None => "-".to_string(),
+                    };
+                    ui.label(
+                        egui::RichText::new(date_str)
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
+                    if ui.small_button("View").clicked() {
+                        self.batch_selected = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+
+        // Show selected replay's summary
+        if let Some(idx) = self.batch_selected {
+            if idx < self.batch_replays.len() {
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                let entry = &self.batch_replays[idx];
+                ui.heading(format!("{} — {}", entry.replay.matchup, entry.filename));
+
+                // Quick stats
+                egui::Grid::new("batch_detail")
+                    .num_columns(2)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        for (_, name, apm) in &entry.cached.apm_data {
+                            ui.label(egui::RichText::new(name).strong());
+                            ui.label(format!(
+                                "APM: {:.0} | EAPM: {:.0}",
+                                apm.avg_apm, apm.avg_eapm
+                            ));
+                            ui.end_row();
+                        }
+                    });
+
+                ui.add_space(8.0);
+                egui::Grid::new("batch_resources")
+                    .num_columns(3)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("Player").strong());
+                        ui.label(egui::RichText::new("Minerals").strong());
+                        ui.label(egui::RichText::new("Gas").strong());
+                        ui.end_row();
+
+                        for (_, name, res) in &entry.cached.resource_estimates {
+                            ui.label(name);
+                            ui.label(format!("{}", res.total_minerals));
+                            ui.label(format!("{}", res.total_gas));
+                            ui.end_row();
+                        }
+                    });
+            }
+        }
+
+        // Batch export
+        ui.add_space(16.0);
+        ui.separator();
+        if ui.button("Export All to CSV").clicked() {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("CSV", &["csv"])
+                .set_file_name("batch_stats.csv")
+                .save_file()
+            {
+                let mut csv = String::from("File,Map,Matchup,Duration (s),Date");
+                // Add player APM columns dynamically
+                csv.push_str(",P1 Name,P1 APM,P1 EAPM,P1 Minerals,P1 Gas");
+                csv.push_str(",P2 Name,P2 APM,P2 EAPM,P2 Minerals,P2 Gas\n");
+
+                for entry in &self.batch_replays {
+                    csv.push_str(&format!(
+                        "{},{},{},{:.0},{}",
+                        escape_csv(&entry.filename),
+                        escape_csv(&entry.replay.map_name),
+                        entry.replay.matchup,
+                        entry.replay.duration_secs,
+                        entry.replay.timestamp,
+                    ));
+
+                    // Player 1 stats
+                    for p_idx in 0..2 {
+                        if let Some((_, name, apm)) = entry.cached.apm_data.get(p_idx) {
+                            let res = entry
+                                .cached
+                                .resource_estimates
+                                .get(p_idx)
+                                .map(|(_, _, r)| r);
+                            csv.push_str(&format!(
+                                ",{},{:.0},{:.0},{},{}",
+                                escape_csv(name),
+                                apm.avg_apm,
+                                apm.avg_eapm,
+                                res.map(|r| r.total_minerals).unwrap_or(0),
+                                res.map(|r| r.total_gas).unwrap_or(0),
+                            ));
+                        } else {
+                            csv.push_str(",,,,");
+                        }
+                    }
+                    csv.push('\n');
+                }
+
+                let _ = std::fs::write(path, csv);
+            }
+        }
+    }
+}
+
+fn escape_csv(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
     }
 }
 
@@ -485,9 +1090,9 @@ impl eframe::App for App {
                     }
                 }
 
-                // Tab buttons (only show when a replay is loaded)
+                // Tab buttons
+                ui.separator();
                 if self.replay.is_some() {
-                    ui.separator();
                     if ui
                         .selectable_label(self.active_tab == Tab::Summary, "Summary")
                         .clicked()
@@ -506,12 +1111,29 @@ impl eframe::App for App {
                     {
                         self.active_tab = Tab::Charts;
                     }
+                    if ui
+                        .selectable_label(self.active_tab == Tab::Analytics, "Analytics")
+                        .clicked()
+                    {
+                        self.active_tab = Tab::Analytics;
+                    }
+                }
+                // Batch tab always available
+                if ui
+                    .selectable_label(self.active_tab == Tab::Batch, "Batch")
+                    .clicked()
+                {
+                    self.active_tab = Tab::Batch;
                 }
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(ref error) = self.error {
+            if self.active_tab == Tab::Batch {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.render_batch(ui);
+                });
+            } else if let Some(ref error) = self.error {
                 ui.add_space(20.0);
                 ui.colored_label(
                     egui::Color32::from_rgb(255, 100, 100),
@@ -524,6 +1146,8 @@ impl eframe::App for App {
                     Tab::Summary => self.render_summary(ui, &replay),
                     Tab::Stats => self.render_stats(ui, &replay),
                     Tab::Charts => self.render_charts(ui, &replay),
+                    Tab::Analytics => self.render_analytics(ui, &replay),
+                    Tab::Batch => {} // handled above
                 });
             } else {
                 self.render_welcome(ui);

@@ -1,3 +1,4 @@
+use crate::parser::costs;
 use crate::parser::*;
 use std::collections::HashMap;
 
@@ -317,4 +318,419 @@ pub fn compute_hotkey_stats(commands: &[Command], player_id: u8) -> HotkeyStats 
     }
 
     stats
+}
+
+// ─── Supply curve ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct SupplyCurve {
+    /// (time_seconds, supply_used, supply_max) at each production event
+    pub points: Vec<(f64, f64, f64)>,
+}
+
+pub fn compute_supply_curve(
+    commands: &[Command],
+    player_id: u8,
+    race: &Race,
+    total_frames: u32,
+) -> SupplyCurve {
+    let (mut used, mut max) = costs::starting_supply(race);
+    let mut points = vec![(0.0, used, max)];
+
+    for cmd in commands {
+        if cmd.player_id != player_id {
+            continue;
+        }
+
+        let unit_id = match &cmd.cmd {
+            CmdType::Build { unit_id, .. } => Some(*unit_id),
+            CmdType::Train { unit_id } => Some(*unit_id),
+            CmdType::UnitMorph { unit_id } => Some(*unit_id),
+            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
+            _ => None,
+        };
+
+        if let Some(uid) = unit_id {
+            if let Some(cost) = costs::unit_cost(uid) {
+                let time = cmd.frame as f64 / FRAMES_PER_SECOND;
+                if cost.supply < 0.0 {
+                    // Supply provider
+                    max -= cost.supply; // subtracting negative = adding
+                } else {
+                    used += cost.supply;
+                }
+                points.push((time, used, max));
+            }
+        }
+    }
+
+    // Add final point at game end
+    let end_time = total_frames as f64 / FRAMES_PER_SECOND;
+    points.push((end_time, used, max));
+
+    SupplyCurve { points }
+}
+
+// ─── Production timeline ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ProductionEvent {
+    pub frame: u32,
+    pub time_secs: f64,
+    pub time_str: String,
+    pub unit_name: String,
+    pub unit_id: u16,
+    pub is_building: bool,
+}
+
+/// Returns a timeline of all production events sorted by time.
+/// Unlike build order, this includes unit cost info for resource tracking.
+#[allow(dead_code)]
+pub fn compute_production_timeline(commands: &[Command], player_id: u8) -> Vec<ProductionEvent> {
+    let mut events = Vec::new();
+
+    for cmd in commands {
+        if cmd.player_id != player_id {
+            continue;
+        }
+
+        let unit_id = match &cmd.cmd {
+            CmdType::Build { unit_id, .. } => Some(*unit_id),
+            CmdType::Train { unit_id } => Some(*unit_id),
+            CmdType::UnitMorph { unit_id } => Some(*unit_id),
+            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
+            _ => None,
+        };
+
+        if let Some(uid) = unit_id {
+            let name = unit_name(uid);
+            if name == "Unknown" {
+                continue;
+            }
+            let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
+            let mins = (secs / 60.0) as u32;
+            let s = (secs % 60.0) as u32;
+            events.push(ProductionEvent {
+                frame: cmd.frame,
+                time_secs: secs,
+                time_str: format!("{}:{:02}", mins, s),
+                unit_name: name.to_string(),
+                unit_id: uid,
+                is_building: is_building(uid),
+            });
+        }
+    }
+
+    events
+}
+
+/// For Gantt-style: returns (unit_name, first_frame, last_frame) — when each unit
+/// type was first and last produced.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct UnitProductionSpan {
+    pub unit_name: String,
+    pub unit_id: u16,
+    pub is_building: bool,
+    pub first_time_secs: f64,
+    pub last_time_secs: f64,
+    pub count: u32,
+}
+
+pub fn compute_production_spans(commands: &[Command], player_id: u8) -> Vec<UnitProductionSpan> {
+    let mut spans: HashMap<u16, (String, bool, f64, f64, u32)> = HashMap::new();
+
+    for cmd in commands {
+        if cmd.player_id != player_id {
+            continue;
+        }
+
+        let unit_id = match &cmd.cmd {
+            CmdType::Build { unit_id, .. } => Some(*unit_id),
+            CmdType::Train { unit_id } => Some(*unit_id),
+            CmdType::UnitMorph { unit_id } => Some(*unit_id),
+            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
+            _ => None,
+        };
+
+        if let Some(uid) = unit_id {
+            let name = unit_name(uid);
+            if name == "Unknown" {
+                continue;
+            }
+            let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
+            let entry =
+                spans
+                    .entry(uid)
+                    .or_insert((name.to_string(), is_building(uid), secs, secs, 0));
+            entry.3 = secs; // update last time
+            entry.4 += 1;
+        }
+    }
+
+    let mut result: Vec<UnitProductionSpan> = spans
+        .into_iter()
+        .map(
+            |(uid, (name, bld, first, last, count))| UnitProductionSpan {
+                unit_name: name,
+                unit_id: uid,
+                is_building: bld,
+                first_time_secs: first,
+                last_time_secs: last,
+                count,
+            },
+        )
+        .collect();
+
+    result.sort_by(|a, b| a.first_time_secs.partial_cmp(&b.first_time_secs).unwrap());
+    result
+}
+
+// ─── Resource estimation ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ResourceEstimate {
+    /// (time_seconds, cumulative_minerals, cumulative_gas) at each spend event
+    pub spending_curve: Vec<(f64, u32, u32)>,
+    pub total_minerals: u32,
+    pub total_gas: u32,
+}
+
+pub fn compute_resource_estimate(commands: &[Command], player_id: u8) -> ResourceEstimate {
+    let mut total_minerals: u32 = 0;
+    let mut total_gas: u32 = 0;
+    let mut curve = vec![(0.0, 0u32, 0u32)];
+
+    for cmd in commands {
+        if cmd.player_id != player_id {
+            continue;
+        }
+
+        let (minerals, gas) = match &cmd.cmd {
+            CmdType::Build { unit_id, .. }
+            | CmdType::Train { unit_id }
+            | CmdType::UnitMorph { unit_id }
+            | CmdType::BuildingMorph { unit_id } => {
+                if let Some(cost) = costs::unit_cost(*unit_id) {
+                    (cost.minerals, cost.gas)
+                } else {
+                    continue;
+                }
+            }
+            CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
+            CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
+            _ => continue,
+        };
+
+        if minerals == 0 && gas == 0 {
+            continue;
+        }
+
+        total_minerals += minerals;
+        total_gas += gas;
+        let time = cmd.frame as f64 / FRAMES_PER_SECOND;
+        curve.push((time, total_minerals, total_gas));
+    }
+
+    ResourceEstimate {
+        spending_curve: curve,
+        total_minerals,
+        total_gas,
+    }
+}
+
+// ─── Idle time / macro gap analysis ─────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct IdleGap {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    pub duration_secs: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdleAnalysis {
+    pub gaps: Vec<IdleGap>,
+    pub total_idle_secs: f64,
+    pub longest_gap_secs: f64,
+    pub gap_count: usize,
+}
+
+/// Detects periods of inactivity (no commands) longer than `threshold_secs`.
+/// Default threshold: 5 seconds (about 119 frames at fastest speed).
+pub fn compute_idle_gaps(
+    commands: &[Command],
+    player_id: u8,
+    total_frames: u32,
+    threshold_secs: f64,
+) -> IdleAnalysis {
+    let player_cmds: Vec<f64> = commands
+        .iter()
+        .filter(|c| c.player_id == player_id && is_player_action(&c.cmd))
+        .map(|c| c.frame as f64 / FRAMES_PER_SECOND)
+        .collect();
+
+    let mut gaps = Vec::new();
+    let mut total_idle = 0.0;
+    let mut longest = 0.0;
+
+    if player_cmds.is_empty() {
+        let total_secs = total_frames as f64 / FRAMES_PER_SECOND;
+        return IdleAnalysis {
+            gaps: vec![IdleGap {
+                start_secs: 0.0,
+                end_secs: total_secs,
+                duration_secs: total_secs,
+            }],
+            total_idle_secs: total_secs,
+            longest_gap_secs: total_secs,
+            gap_count: 1,
+        };
+    }
+
+    // Check gap from game start to first command
+    if player_cmds[0] > threshold_secs {
+        let gap = IdleGap {
+            start_secs: 0.0,
+            end_secs: player_cmds[0],
+            duration_secs: player_cmds[0],
+        };
+        total_idle += gap.duration_secs;
+        if gap.duration_secs > longest {
+            longest = gap.duration_secs;
+        }
+        gaps.push(gap);
+    }
+
+    // Check gaps between consecutive commands
+    for window in player_cmds.windows(2) {
+        let delta = window[1] - window[0];
+        if delta > threshold_secs {
+            let gap = IdleGap {
+                start_secs: window[0],
+                end_secs: window[1],
+                duration_secs: delta,
+            };
+            total_idle += gap.duration_secs;
+            if gap.duration_secs > longest {
+                longest = gap.duration_secs;
+            }
+            gaps.push(gap);
+        }
+    }
+
+    let count = gaps.len();
+    IdleAnalysis {
+        gaps,
+        total_idle_secs: total_idle,
+        longest_gap_secs: longest,
+        gap_count: count,
+    }
+}
+
+// ─── CSV export ─────────────────────────────────────────────────────────────
+
+/// Generate CSV content for a single replay's analytics.
+pub fn export_csv(
+    replay: &Replay,
+    apm_data: &[(u8, String, ApmData)],
+    build_orders: &[(u8, String, Vec<BuildOrderEntry>)],
+    unit_counts: &[(u8, String, Vec<UnitCount>)],
+    resource_estimates: &[(u8, String, ResourceEstimate)],
+    idle_analyses: &[(u8, String, IdleAnalysis)],
+) -> String {
+    let mut csv = String::new();
+
+    // Game info header
+    csv.push_str("# Game Info\n");
+    csv.push_str("Map,Duration (s),Matchup,Date,Speed,Type\n");
+    csv.push_str(&format!(
+        "{},{:.0},{},{},{},{}\n\n",
+        escape_csv(&replay.map_name),
+        replay.duration_secs,
+        replay.matchup,
+        replay.timestamp,
+        replay.game_speed,
+        replay.game_type,
+    ));
+
+    // APM summary
+    csv.push_str("# APM Summary\n");
+    csv.push_str("Player,Avg APM,Avg EAPM\n");
+    for (_, name, apm) in apm_data {
+        csv.push_str(&format!(
+            "{},{:.1},{:.1}\n",
+            escape_csv(name),
+            apm.avg_apm,
+            apm.avg_eapm,
+        ));
+    }
+    csv.push('\n');
+
+    // Resource estimates
+    csv.push_str("# Resource Estimates\n");
+    csv.push_str("Player,Total Minerals,Total Gas\n");
+    for (_, name, res) in resource_estimates {
+        csv.push_str(&format!(
+            "{},{},{}\n",
+            escape_csv(name),
+            res.total_minerals,
+            res.total_gas,
+        ));
+    }
+    csv.push('\n');
+
+    // Idle analysis
+    csv.push_str("# Idle Analysis\n");
+    csv.push_str("Player,Gap Count,Total Idle (s),Longest Gap (s)\n");
+    for (_, name, idle) in idle_analyses {
+        csv.push_str(&format!(
+            "{},{},{:.1},{:.1}\n",
+            escape_csv(name),
+            idle.gap_count,
+            idle.total_idle_secs,
+            idle.longest_gap_secs,
+        ));
+    }
+    csv.push('\n');
+
+    // Build orders per player
+    for (_, name, entries) in build_orders {
+        csv.push_str(&format!("# Build Order — {}\n", name));
+        csv.push_str("Time,Unit\n");
+        for entry in entries {
+            csv.push_str(&format!(
+                "{},{}\n",
+                entry.time_str,
+                escape_csv(&entry.unit_name),
+            ));
+        }
+        csv.push('\n');
+    }
+
+    // Unit counts per player
+    for (_, name, counts) in unit_counts {
+        csv.push_str(&format!("# Unit Production — {}\n", name));
+        csv.push_str("Unit,Count,Type\n");
+        for uc in counts {
+            csv.push_str(&format!(
+                "{},{},{}\n",
+                escape_csv(&uc.unit_name),
+                uc.count,
+                if uc.is_building { "Building" } else { "Unit" },
+            ));
+        }
+        csv.push('\n');
+    }
+
+    csv
+}
+
+fn escape_csv(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
 }
