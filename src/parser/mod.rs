@@ -544,16 +544,45 @@ enum RepFormat {
 }
 
 fn detect_format(data: &[u8]) -> Result<RepFormat, String> {
-    if data.len() < 30 {
-        return Err("File too small to detect format".into());
+    if data.len() < 32 {
+        return Err("File too small to be a valid replay".into());
     }
-    // byte 12 is the first byte of the Replay ID section data
-    if data[12] == b's' {
-        Ok(RepFormat::Modern121)
-    } else if data[28] != 0x78 {
-        Ok(RepFormat::Legacy)
+
+    // Section 0 layout: checksum(4) + chunk_count(4) + compressed_len(4) + data(...)
+    let chunk_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+    if chunk_count == 0 || chunk_count > 16 {
+        // Doesn't look like a valid modern section header — try legacy
+        return Ok(RepFormat::Legacy);
+    }
+
+    let compressed_len = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+    if compressed_len == 0 || 12 + compressed_len > data.len() {
+        return Ok(RepFormat::Legacy);
+    }
+
+    let chunk_data = &data[12..12 + compressed_len];
+
+    // Decompress and check the Replay ID content
+    let replay_id = if chunk_data.len() > 2 && chunk_data[0] == 0x78 {
+        zlib_decompress(chunk_data).unwrap_or_else(|_| chunk_data.to_vec())
     } else {
+        chunk_data.to_vec()
+    };
+
+    if replay_id.len() >= 4 {
+        if &replay_id[..4] == b"seRS" {
+            return Ok(RepFormat::Modern121);
+        }
+        if &replay_id[..4] == b"reRS" {
+            return Ok(RepFormat::Modern);
+        }
+    }
+
+    // Fallback: if we got valid zlib data but unrecognized ID, still modern
+    if chunk_data.len() > 2 && chunk_data[0] == 0x78 {
         Ok(RepFormat::Modern)
+    } else {
+        Ok(RepFormat::Legacy)
     }
 }
 
@@ -599,11 +628,39 @@ impl<'a> SectionReader<'a> {
         // chunk count (4 bytes)
         let chunk_count = self.read_u32_raw()?;
 
+        if chunk_count > 256 {
+            return Err(format!(
+                "Unreasonable chunk count {} at offset {} (format: {:?})",
+                chunk_count,
+                self.pos - 4,
+                self.format
+            ));
+        }
+
         let mut result = Vec::with_capacity(expected_size);
-        for _ in 0..chunk_count {
+        for i in 0..chunk_count {
             let compressed_len = self.read_u32_raw()? as usize;
+            if compressed_len > 1_048_576 {
+                return Err(format!(
+                    "Unreasonable chunk size {} bytes (chunk {}/{}, offset {}, format: {:?})",
+                    compressed_len,
+                    i + 1,
+                    chunk_count,
+                    self.pos - 4,
+                    self.format
+                ));
+            }
             if self.remaining() < compressed_len {
-                return Err("Truncated chunk data".into());
+                return Err(format!(
+                    "Truncated chunk data: need {} bytes but only {} remaining \
+                     (chunk {}/{}, offset {}, format: {:?})",
+                    compressed_len,
+                    self.remaining(),
+                    i + 1,
+                    chunk_count,
+                    self.pos - 4,
+                    self.format
+                ));
             }
             let chunk_data = &self.data[self.pos..self.pos + compressed_len];
             self.pos += compressed_len;
