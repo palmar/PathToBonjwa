@@ -108,8 +108,7 @@ impl App {
             ui.heading(&replay.matchup);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{}", replay.game_type))
-                        .color(egui::Color32::GRAY),
+                    egui::RichText::new(format!("{}", replay.game_type)).color(egui::Color32::GRAY),
                 );
             });
         });
@@ -221,7 +220,9 @@ impl App {
 
         for (pid, name, entries) in &cached.build_orders {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player.map(|p| p.color.to_egui()).unwrap_or(egui::Color32::WHITE);
+            let color = player
+                .map(|p| p.color.to_egui())
+                .unwrap_or(egui::Color32::WHITE);
 
             egui::CollapsingHeader::new(
                 egui::RichText::new(format!("{} ({} actions)", name, entries.len()))
@@ -246,7 +247,8 @@ impl App {
                                     .monospace(),
                             );
                             let style = if parser::is_building(entry.unit_id) {
-                                egui::RichText::new(&entry.unit_name).color(egui::Color32::LIGHT_BLUE)
+                                egui::RichText::new(&entry.unit_name)
+                                    .color(egui::Color32::LIGHT_BLUE)
                             } else {
                                 egui::RichText::new(&entry.unit_name)
                             };
@@ -273,48 +275,57 @@ impl App {
 
         for (pid, name, counts) in &cached.unit_counts {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player.map(|p| p.color.to_egui()).unwrap_or(egui::Color32::WHITE);
+            let color = player
+                .map(|p| p.color.to_egui())
+                .unwrap_or(egui::Color32::WHITE);
 
-            egui::CollapsingHeader::new(
-                egui::RichText::new(name).color(color).strong(),
-            )
-            .default_open(true)
-            .show(ui, |ui| {
-                let buildings: Vec<&UnitCount> = counts.iter().filter(|c| c.is_building).collect();
-                let units: Vec<&UnitCount> = counts.iter().filter(|c| !c.is_building).collect();
+            egui::CollapsingHeader::new(egui::RichText::new(name).color(color).strong())
+                .default_open(true)
+                .show(ui, |ui| {
+                    let buildings: Vec<&UnitCount> =
+                        counts.iter().filter(|c| c.is_building).collect();
+                    let units: Vec<&UnitCount> = counts.iter().filter(|c| !c.is_building).collect();
 
-                if !buildings.is_empty() {
-                    ui.label(egui::RichText::new("Buildings").small().color(egui::Color32::GRAY));
-                    egui::Grid::new(format!("bldg_{}", pid))
-                        .num_columns(2)
-                        .spacing([20.0, 2.0])
-                        .show(ui, |ui| {
-                            for b in &buildings {
-                                ui.label(
-                                    egui::RichText::new(&b.unit_name)
-                                        .color(egui::Color32::LIGHT_BLUE),
-                                );
-                                ui.label(format!("x{}", b.count));
-                                ui.end_row();
-                            }
-                        });
-                    ui.add_space(4.0);
-                }
+                    if !buildings.is_empty() {
+                        ui.label(
+                            egui::RichText::new("Buildings")
+                                .small()
+                                .color(egui::Color32::GRAY),
+                        );
+                        egui::Grid::new(format!("bldg_{}", pid))
+                            .num_columns(2)
+                            .spacing([20.0, 2.0])
+                            .show(ui, |ui| {
+                                for b in &buildings {
+                                    ui.label(
+                                        egui::RichText::new(&b.unit_name)
+                                            .color(egui::Color32::LIGHT_BLUE),
+                                    );
+                                    ui.label(format!("x{}", b.count));
+                                    ui.end_row();
+                                }
+                            });
+                        ui.add_space(4.0);
+                    }
 
-                if !units.is_empty() {
-                    ui.label(egui::RichText::new("Units").small().color(egui::Color32::GRAY));
-                    egui::Grid::new(format!("units_{}", pid))
-                        .num_columns(2)
-                        .spacing([20.0, 2.0])
-                        .show(ui, |ui| {
-                            for u in &units {
-                                ui.label(&u.unit_name);
-                                ui.label(format!("x{}", u.count));
-                                ui.end_row();
-                            }
-                        });
-                }
-            });
+                    if !units.is_empty() {
+                        ui.label(
+                            egui::RichText::new("Units")
+                                .small()
+                                .color(egui::Color32::GRAY),
+                        );
+                        egui::Grid::new(format!("units_{}", pid))
+                            .num_columns(2)
+                            .spacing([20.0, 2.0])
+                            .show(ui, |ui| {
+                                for u in &units {
+                                    ui.label(&u.unit_name);
+                                    ui.label(format!("x{}", u.count));
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                });
             ui.add_space(8.0);
         }
 
@@ -325,7 +336,9 @@ impl App {
 
         for (pid, name, stats) in &cached.hotkey_stats {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player.map(|p| p.color.to_egui()).unwrap_or(egui::Color32::WHITE);
+            let color = player
+                .map(|p| p.color.to_egui())
+                .unwrap_or(egui::Color32::WHITE);
 
             let total: u32 = stats.groups.iter().map(|g| g.total()).sum();
             if total == 0 {
@@ -359,10 +372,7 @@ impl App {
                             ui.label(format!("{}", group.assigns));
                             ui.label(format!("{}", group.selects));
                             ui.label(format!("{}", group.adds));
-                            ui.label(
-                                egui::RichText::new(format!("{}", group.total()))
-                                    .strong(),
-                            );
+                            ui.label(egui::RichText::new(format!("{}", group.total())).strong());
                             ui.end_row();
                         }
                     });
@@ -393,13 +403,12 @@ impl App {
             .show(ui, |plot_ui| {
                 for (pid, name, apm) in &cached.apm_data {
                     let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player.map(|p| p.color.to_egui()).unwrap_or(egui::Color32::WHITE);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
 
-                    let points: PlotPoints = apm
-                        .apm_per_minute
-                        .iter()
-                        .map(|&(x, y)| [x, y])
-                        .collect();
+                    let points: PlotPoints =
+                        apm.apm_per_minute.iter().map(|&(x, y)| [x, y]).collect();
                     let line = Line::new(points)
                         .name(format!("{} APM", name))
                         .color(color)
@@ -421,13 +430,12 @@ impl App {
             .show(ui, |plot_ui| {
                 for (pid, name, apm) in &cached.apm_data {
                     let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player.map(|p| p.color.to_egui()).unwrap_or(egui::Color32::WHITE);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
 
-                    let points: PlotPoints = apm
-                        .eapm_per_minute
-                        .iter()
-                        .map(|&(x, y)| [x, y])
-                        .collect();
+                    let points: PlotPoints =
+                        apm.eapm_per_minute.iter().map(|&(x, y)| [x, y]).collect();
                     let line = Line::new(points)
                         .name(format!("{} EAPM", name))
                         .color(color)
@@ -459,11 +467,7 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("PathToBonjwa")
-                        .strong()
-                        .size(16.0),
-                );
+                ui.label(egui::RichText::new("PathToBonjwa").strong().size(16.0));
                 ui.separator();
                 if ui.button("Open Replay").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
@@ -516,12 +520,10 @@ impl eframe::App for App {
                 ui.add_space(20.0);
                 self.render_welcome(ui);
             } else if let Some(replay) = self.replay.clone() {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    match self.active_tab {
-                        Tab::Summary => self.render_summary(ui, &replay),
-                        Tab::Stats => self.render_stats(ui, &replay),
-                        Tab::Charts => self.render_charts(ui, &replay),
-                    }
+                egui::ScrollArea::vertical().show(ui, |ui| match self.active_tab {
+                    Tab::Summary => self.render_summary(ui, &replay),
+                    Tab::Stats => self.render_stats(ui, &replay),
+                    Tab::Charts => self.render_charts(ui, &replay),
                 });
             } else {
                 self.render_welcome(ui);

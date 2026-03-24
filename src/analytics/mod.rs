@@ -36,8 +36,17 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
     // Fast selection spam (< 8 frames apart, both selections)
     if delta <= 8 && is_selection_changer(&cmd.cmd) && is_selection_changer(&prev.cmd) {
         // Allow double-tap hotkey for centering
-        if let (CmdType::Hotkey { hotkey_type: HotkeyAction::Select, group: g1 },
-                CmdType::Hotkey { hotkey_type: HotkeyAction::Select, group: g2 }) = (&cmd.cmd, &prev.cmd) {
+        if let (
+            CmdType::Hotkey {
+                hotkey_type: HotkeyAction::Select,
+                group: g1,
+            },
+            CmdType::Hotkey {
+                hotkey_type: HotkeyAction::Select,
+                group: g2,
+            },
+        ) = (&cmd.cmd, &prev.cmd)
+        {
             if g1 == g2 {
                 return false; // Double-tap is OK
             }
@@ -53,7 +62,9 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
     if delta <= 20 {
         match (&prev.cmd, &cmd.cmd) {
             (CmdType::Train { .. } | CmdType::TrainFighter, CmdType::CancelTrain) => return true,
-            (CmdType::UnitMorph { .. } | CmdType::BuildingMorph { .. }, CmdType::CancelMorph) => return true,
+            (CmdType::UnitMorph { .. } | CmdType::BuildingMorph { .. }, CmdType::CancelMorph) => {
+                return true
+            }
             (CmdType::Upgrade { .. }, CmdType::CancelUpgrade) => return true,
             (CmdType::Tech { .. }, CmdType::CancelTech) => return true,
             _ => {}
@@ -63,15 +74,25 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
     // Fast repetition of same command (< 10 frames)
     if delta <= 10 {
         match (&prev.cmd, &cmd.cmd) {
-            (CmdType::Stop, CmdType::Stop) |
-            (CmdType::HoldPosition, CmdType::HoldPosition) => return true,
+            (CmdType::Stop, CmdType::Stop) | (CmdType::HoldPosition, CmdType::HoldPosition) => {
+                return true
+            }
             _ => {}
         }
     }
 
     // Repeated hotkey assign/add
-    if let (CmdType::Hotkey { hotkey_type: ht1, group: g1 },
-            CmdType::Hotkey { hotkey_type: ht2, group: g2 }) = (&cmd.cmd, &prev.cmd) {
+    if let (
+        CmdType::Hotkey {
+            hotkey_type: ht1,
+            group: g1,
+        },
+        CmdType::Hotkey {
+            hotkey_type: ht2,
+            group: g2,
+        },
+    ) = (&cmd.cmd, &prev.cmd)
+    {
         if g1 == g2 && *ht1 != HotkeyAction::Select && ht1 == ht2 {
             return true;
         }
@@ -81,9 +102,13 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
 }
 
 fn is_selection_changer(cmd: &CmdType) -> bool {
-    matches!(cmd,
-        CmdType::Select { .. } |
-        CmdType::Hotkey { hotkey_type: HotkeyAction::Select, .. }
+    matches!(
+        cmd,
+        CmdType::Select { .. }
+            | CmdType::Hotkey {
+                hotkey_type: HotkeyAction::Select,
+                ..
+            }
     )
 }
 
@@ -105,7 +130,11 @@ pub fn compute_apm(commands: &[Command], player_id: u8, total_frames: u32) -> Ap
         let bucket = minute.min(num_buckets - 1);
         apm_buckets[bucket] += 1.0;
 
-        let prev: Option<&Command> = if i > 0 { Some(player_cmds[i - 1]) } else { None };
+        let prev: Option<&Command> = if i > 0 {
+            Some(player_cmds[i - 1])
+        } else {
+            None
+        };
         if !is_ineffective(cmd, prev) {
             eapm_buckets[bucket] += 1.0;
         }
@@ -126,8 +155,16 @@ pub fn compute_apm(commands: &[Command], player_id: u8, total_frames: u32) -> Ap
     let total_actions: f64 = apm_buckets.iter().sum();
     let total_effective: f64 = eapm_buckets.iter().sum();
 
-    let avg_apm = if total_minutes > 0.0 { total_actions / total_minutes } else { 0.0 };
-    let avg_eapm = if total_minutes > 0.0 { total_effective / total_minutes } else { 0.0 };
+    let avg_apm = if total_minutes > 0.0 {
+        total_actions / total_minutes
+    } else {
+        0.0
+    };
+    let avg_eapm = if total_minutes > 0.0 {
+        total_effective / total_minutes
+    } else {
+        0.0
+    };
 
     ApmData {
         apm_per_minute,
@@ -140,6 +177,7 @@ pub fn compute_apm(commands: &[Command], player_id: u8, total_frames: u32) -> Ap
 // ─── Build order ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BuildOrderEntry {
     pub frame: u32,
     pub time_str: String,
@@ -186,6 +224,7 @@ pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrde
 // ─── Unit production counts ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct UnitCount {
     pub unit_name: String,
     pub unit_id: u16,
