@@ -186,8 +186,14 @@ pub struct BuildOrderEntry {
     pub unit_id: u16,
 }
 
+/// Dedup window: commands for the same unit within this many frames are collapsed.
+/// ~1 second at 23.81 fps — filters hotkey spam while preserving intentional queues.
+const BUILD_ORDER_DEDUP_FRAMES: u32 = 24;
+
 pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrderEntry> {
     let mut entries = Vec::new();
+    // Track last frame we accepted each unit_id to deduplicate spam
+    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
 
     for cmd in commands {
         if cmd.player_id != player_id {
@@ -207,6 +213,16 @@ pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrde
             if name == "Unknown" {
                 continue;
             }
+
+            // Skip if we already recorded this unit within the dedup window
+            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
+                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
+                    continue;
+                }
+            }
+
+            last_frame_for_unit.insert(uid, cmd.frame);
+
             let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
             let mins = (secs / 60.0) as u32;
             let s = (secs % 60.0) as u32;
