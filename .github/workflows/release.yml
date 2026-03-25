@@ -63,3 +63,30 @@ jobs:
         with:
           files: PathToBonjwa-*.exe
           generate_release_notes: true
+
+  deploy:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+
+      - name: Deploy exe and page to server
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "DEPLOY_SSH_KEY secret not set — skipping deploy"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H 10.85.8.110 >> ~/.ssh/known_hosts 2>/dev/null || true
+          VERSION="${GITHUB_REF_NAME}"
+          scp -i ~/.ssh/id_deploy "PathToBonjwa-${VERSION}.exe" root@10.85.8.110:/pathtobonjwa/PathToBonjwa-latest.exe
+          scp -i ~/.ssh/id_deploy deploy/index.html root@10.85.8.110:/pathtobonjwa/index.html
