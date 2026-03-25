@@ -683,11 +683,6 @@ impl<'a> SectionReader<'a> {
     fn read_section(&mut self, fixed_size: Option<usize>) -> Result<Vec<u8>, String> {
         self.sections_read += 1;
 
-        // For 1.21, extra 4 bytes between sections 1 and 2
-        if self.format == RepFormat::Modern121 && self.sections_read == 3 && self.remaining() >= 4 {
-            self.pos += 4;
-        }
-
         match self.format {
             RepFormat::Modern | RepFormat::Modern121 => {
                 let size = match fixed_size {
