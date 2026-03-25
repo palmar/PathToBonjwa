@@ -373,8 +373,8 @@ pub fn compute_supply_curve(
             if let Some(cost) = costs::unit_cost(uid) {
                 let time = cmd.frame as f64 / FRAMES_PER_SECOND;
                 if cost.supply < 0.0 {
-                    // Supply provider
-                    max -= cost.supply; // subtracting negative = adding
+                    // Supply provider — cap at 200 (BW hard limit)
+                    max = (max - cost.supply).min(200.0);
                 } else if costs::is_worker(uid) {
                     worker_supply += cost.supply;
                 } else {
