@@ -103,7 +103,6 @@ enum Tab {
     Stats,
     Charts,
     Analytics,
-    Batch,
     Logs,
 }
 
@@ -115,6 +114,7 @@ struct LogEntry {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum LogLevel {
     Info,
     Warn,
@@ -127,19 +127,10 @@ pub struct App {
     dropped_file: Option<Vec<u8>>,
     active_tab: Tab,
     cached: Option<CachedAnalytics>,
-    // Batch mode: multiple loaded replays
-    batch_replays: Vec<BatchEntry>,
-    batch_selected: Option<usize>,
     // Client-side logging
     log_entries: Vec<LogEntry>,
     log_start: Instant,
     log_auto_scroll: bool,
-}
-
-struct BatchEntry {
-    filename: String,
-    replay: Replay,
-    cached: CachedAnalytics,
 }
 
 struct CachedAnalytics {
@@ -163,8 +154,6 @@ impl Default for App {
             dropped_file: None,
             active_tab: Tab::Summary,
             cached: None,
-            batch_replays: Vec::new(),
-            batch_selected: None,
             log_entries: Vec::new(),
             log_start: start,
             log_auto_scroll: true,
@@ -235,23 +224,6 @@ impl App {
                 self.replay = None;
                 self.cached = None;
                 self.error = Some(e);
-            }
-        }
-    }
-
-    fn load_replay_batch(&mut self, filename: String, data: Vec<u8>) {
-        match parser::parse_replay(&data) {
-            Ok(replay) => {
-                let cached = Self::compute_analytics(&replay);
-                self.log(LogLevel::Info, format!("Batch loaded: {}", filename));
-                self.batch_replays.push(BatchEntry {
-                    filename,
-                    replay,
-                    cached,
-                });
-            }
-            Err(e) => {
-                self.log(LogLevel::Warn, format!("Batch skip {}: {}", filename, e));
             }
         }
     }
@@ -1028,208 +1000,6 @@ impl App {
         }
     }
 
-    fn render_batch(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        bw_section_heading(ui, "Multi-Replay Batch View");
-
-        ui.horizontal(|ui| {
-            if ui.button("Load Folder").clicked() {
-                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                    self.batch_replays.clear();
-                    self.batch_selected = None;
-                    if let Ok(entries) = std::fs::read_dir(&folder) {
-                        let mut rep_files: Vec<_> = entries
-                            .filter_map(|e| e.ok())
-                            .filter(|e| {
-                                e.path()
-                                    .extension()
-                                    .map(|ext| ext == "rep" || ext == "Rep" || ext == "REP")
-                                    .unwrap_or(false)
-                            })
-                            .collect();
-                        rep_files.sort_by_key(|e| e.file_name());
-
-                        for entry in &rep_files {
-                            if let Ok(data) = std::fs::read(entry.path()) {
-                                let filename = entry.file_name().to_string_lossy().to_string();
-                                self.load_replay_batch(filename, data);
-                            }
-                        }
-                    }
-                }
-            }
-            if !self.batch_replays.is_empty() {
-                ui.label(format!("{} replays loaded", self.batch_replays.len()));
-                if ui.button("Clear").clicked() {
-                    self.batch_replays.clear();
-                    self.batch_selected = None;
-                }
-            }
-        });
-
-        if self.batch_replays.is_empty() {
-            ui.add_space(40.0);
-            ui.vertical_centered(|ui| {
-                ui.label("Click 'Load Folder' to load all .rep files from a directory");
-            });
-            return;
-        }
-
-        ui.add_space(8.0);
-
-        // Batch summary table
-        egui::Grid::new("batch_table")
-            .num_columns(6)
-            .spacing([12.0, 4.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("File").strong());
-                ui.label(egui::RichText::new("Map").strong());
-                ui.label(egui::RichText::new("Matchup").strong());
-                ui.label(egui::RichText::new("Duration").strong());
-                ui.label(egui::RichText::new("Date").strong());
-                ui.label(egui::RichText::new("").strong());
-                ui.end_row();
-
-                for (i, entry) in self.batch_replays.iter().enumerate() {
-                    let selected = self.batch_selected == Some(i);
-                    let text_color = if selected { BW_CYAN } else { BW_TEXT };
-
-                    ui.label(
-                        egui::RichText::new(&entry.filename)
-                            .color(text_color)
-                            .small(),
-                    );
-                    ui.label(
-                        egui::RichText::new(&entry.replay.map_name)
-                            .small()
-                            .color(egui::Color32::GRAY),
-                    );
-                    ui.label(egui::RichText::new(&entry.replay.matchup).small());
-                    let mins = (entry.replay.duration_secs / 60.0) as u32;
-                    let secs = (entry.replay.duration_secs % 60.0) as u32;
-                    ui.label(
-                        egui::RichText::new(format!("{}:{:02}", mins, secs))
-                            .monospace()
-                            .small(),
-                    );
-                    let dt = chrono::DateTime::from_timestamp(entry.replay.timestamp, 0);
-                    let date_str = match dt {
-                        Some(d) => d.format("%Y-%m-%d").to_string(),
-                        None => "-".to_string(),
-                    };
-                    ui.label(
-                        egui::RichText::new(date_str)
-                            .small()
-                            .color(egui::Color32::GRAY),
-                    );
-                    if ui.small_button("View").clicked() {
-                        self.batch_selected = Some(i);
-                    }
-                    ui.end_row();
-                }
-            });
-
-        // Show selected replay's summary
-        if let Some(idx) = self.batch_selected {
-            if idx < self.batch_replays.len() {
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                let entry = &self.batch_replays[idx];
-                bw_section_heading(
-                    ui,
-                    &format!("{} — {}", entry.replay.matchup, entry.filename),
-                );
-
-                // Quick stats
-                egui::Grid::new("batch_detail")
-                    .num_columns(2)
-                    .spacing([20.0, 4.0])
-                    .show(ui, |ui| {
-                        for (_, name, apm) in &entry.cached.apm_data {
-                            ui.label(egui::RichText::new(name).strong());
-                            ui.label(format!(
-                                "APM: {:.0} | EAPM: {:.0}",
-                                apm.avg_apm, apm.avg_eapm
-                            ));
-                            ui.end_row();
-                        }
-                    });
-
-                ui.add_space(8.0);
-                egui::Grid::new("batch_resources")
-                    .num_columns(3)
-                    .spacing([20.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Player").strong());
-                        ui.label(egui::RichText::new("Minerals").strong());
-                        ui.label(egui::RichText::new("Gas").strong());
-                        ui.end_row();
-
-                        for (_, name, res) in &entry.cached.resource_estimates {
-                            ui.label(name);
-                            ui.label(format!("{}", res.total_minerals));
-                            ui.label(format!("{}", res.total_gas));
-                            ui.end_row();
-                        }
-                    });
-            }
-        }
-
-        // Batch export
-        ui.add_space(16.0);
-        ui.separator();
-        if ui.button("Export All to CSV").clicked() {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("CSV", &["csv"])
-                .set_file_name("batch_stats.csv")
-                .save_file()
-            {
-                let mut csv = String::from("File,Map,Matchup,Duration (s),Date");
-                // Add player APM columns dynamically
-                csv.push_str(",P1 Name,P1 APM,P1 EAPM,P1 Minerals,P1 Gas");
-                csv.push_str(",P2 Name,P2 APM,P2 EAPM,P2 Minerals,P2 Gas\n");
-
-                for entry in &self.batch_replays {
-                    csv.push_str(&format!(
-                        "{},{},{},{:.0},{}",
-                        escape_csv(&entry.filename),
-                        escape_csv(&entry.replay.map_name),
-                        entry.replay.matchup,
-                        entry.replay.duration_secs,
-                        entry.replay.timestamp,
-                    ));
-
-                    // Player 1 stats
-                    for p_idx in 0..2 {
-                        if let Some((_, name, apm)) = entry.cached.apm_data.get(p_idx) {
-                            let res = entry
-                                .cached
-                                .resource_estimates
-                                .get(p_idx)
-                                .map(|(_, _, r)| r);
-                            csv.push_str(&format!(
-                                ",{},{:.0},{:.0},{},{}",
-                                escape_csv(name),
-                                apm.avg_apm,
-                                apm.avg_eapm,
-                                res.map(|r| r.total_minerals).unwrap_or(0),
-                                res.map(|r| r.total_gas).unwrap_or(0),
-                            ));
-                        } else {
-                            csv.push_str(",,,,");
-                        }
-                    }
-                    csv.push('\n');
-                }
-
-                let _ = std::fs::write(path, csv);
-            }
-        }
-    }
-
     fn render_logs(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         bw_section_heading(ui, "Logs");
@@ -1286,14 +1056,6 @@ impl App {
                     });
                 }
             });
-    }
-}
-
-fn escape_csv(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
     }
 }
 
@@ -1374,7 +1136,6 @@ impl eframe::App for App {
                         (Tab::Stats, "Stats", self.replay.is_some()),
                         (Tab::Charts, "Charts", self.replay.is_some()),
                         (Tab::Analytics, "Analytics", self.replay.is_some()),
-                        (Tab::Batch, "Batch", true),
                         (Tab::Logs, "Logs", true),
                     ];
 
@@ -1420,10 +1181,6 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 if self.active_tab == Tab::Logs {
                     self.render_logs(ui);
-                } else if self.active_tab == Tab::Batch {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        self.render_batch(ui);
-                    });
                 } else if let Some(ref error) = self.error {
                     ui.add_space(20.0);
                     ui.colored_label(
@@ -1438,7 +1195,7 @@ impl eframe::App for App {
                         Tab::Stats => self.render_stats(ui, &replay),
                         Tab::Charts => self.render_charts(ui, &replay),
                         Tab::Analytics => self.render_analytics(ui, &replay),
-                        Tab::Batch | Tab::Logs => {} // handled above
+                        Tab::Logs => {} // handled above
                     });
                 } else {
                     self.render_welcome(ui);
