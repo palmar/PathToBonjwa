@@ -636,6 +636,71 @@ pub fn compute_resource_estimate(commands: &[Command], player_id: u8) -> Resourc
     }
 }
 
+// ─── Resource income (spending rate per minute) ─────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ResourceIncomeData {
+    /// (minute_midpoint_seconds, minerals_per_minute, gas_per_minute)
+    pub points: Vec<(f64, f64, f64)>,
+}
+
+/// Computes resource spending rate per minute as a proxy for income.
+/// Uses per-minute buckets derived from the spending curve.
+pub fn compute_resource_income(
+    commands: &[Command],
+    player_id: u8,
+    total_frames: u32,
+) -> ResourceIncomeData {
+    let total_secs = total_frames as f64 / FRAMES_PER_SECOND;
+    let total_minutes = (total_secs / 60.0).ceil() as usize;
+    if total_minutes == 0 {
+        return ResourceIncomeData { points: vec![] };
+    }
+
+    let mut min_buckets = vec![0.0f64; total_minutes];
+    let mut gas_buckets = vec![0.0f64; total_minutes];
+
+    for cmd in commands {
+        if cmd.player_id != player_id {
+            continue;
+        }
+
+        let (minerals, gas) = match &cmd.cmd {
+            CmdType::Build { unit_id, .. }
+            | CmdType::Train { unit_id }
+            | CmdType::UnitMorph { unit_id }
+            | CmdType::BuildingMorph { unit_id } => {
+                if let Some(cost) = costs::unit_cost(*unit_id) {
+                    (cost.minerals, cost.gas)
+                } else {
+                    continue;
+                }
+            }
+            CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
+            CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
+            _ => continue,
+        };
+
+        if minerals == 0 && gas == 0 {
+            continue;
+        }
+
+        let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
+        let bucket = ((secs / 60.0) as usize).min(total_minutes - 1);
+        min_buckets[bucket] += minerals as f64;
+        gas_buckets[bucket] += gas as f64;
+    }
+
+    let points = (0..total_minutes)
+        .map(|i| {
+            let midpoint = (i as f64 + 0.5) * 60.0;
+            (midpoint, min_buckets[i], gas_buckets[i])
+        })
+        .collect();
+
+    ResourceIncomeData { points }
+}
+
 // ─── Idle time / macro gap analysis ─────────────────────────────────────────
 
 #[derive(Debug, Clone)]

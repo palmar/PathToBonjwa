@@ -4,8 +4,8 @@ use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
 use crate::analytics::{
-    self, ApmData, BuildOrderEntry, HotkeyStats, IdleAnalysis, ResourceEstimate, SupplyCurve,
-    UnitCount, UnitProductionSpan,
+    self, ApmData, BuildOrderEntry, HotkeyStats, IdleAnalysis, ResourceEstimate,
+    ResourceIncomeData, SupplyCurve, UnitCount, UnitProductionSpan,
 };
 use crate::parser::{self, Replay};
 
@@ -142,6 +142,7 @@ struct CachedAnalytics {
     supply_curves: Vec<(u8, String, SupplyCurve)>,
     production_spans: Vec<(u8, String, Vec<UnitProductionSpan>)>,
     resource_estimates: Vec<(u8, String, ResourceEstimate)>,
+    resource_income_data: Vec<(u8, String, ResourceIncomeData)>,
     idle_analyses: Vec<(u8, String, IdleAnalysis)>,
 }
 
@@ -236,6 +237,7 @@ impl App {
         let mut supply_curves = Vec::new();
         let mut production_spans = Vec::new();
         let mut resource_estimates = Vec::new();
+        let mut resource_income_data = Vec::new();
         let mut idle_analyses = Vec::new();
 
         for player in &replay.players {
@@ -277,6 +279,11 @@ impl App {
                 name.clone(),
                 analytics::compute_resource_estimate(&replay.commands, pid),
             ));
+            resource_income_data.push((
+                pid,
+                name.clone(),
+                analytics::compute_resource_income(&replay.commands, pid, replay.frames),
+            ));
             idle_analyses.push((
                 pid,
                 name.clone(),
@@ -292,6 +299,7 @@ impl App {
             supply_curves,
             production_spans,
             resource_estimates,
+            resource_income_data,
             idle_analyses,
         }
     }
@@ -790,6 +798,53 @@ impl App {
                     plot_ui.line(
                         Line::new(gas_points)
                             .name(format!("{} Gas", name))
+                            .color(gas_color)
+                            .width(1.5),
+                    );
+                }
+            });
+
+        // ─── Resource income chart (minerals/gas per minute) ─────────
+        ui.add_space(16.0);
+        bw_section_heading(ui, "Resource Income (per Minute)");
+
+        Plot::new("resource_income_chart")
+            .height(plot_height)
+            .allow_scroll(false)
+            .x_axis_label("Seconds")
+            .y_axis_label("Resources / Minute")
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                for (pid, name, income) in &cached.resource_income_data {
+                    let player = replay.players.iter().find(|p| p.player_id == *pid);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
+
+                    // Minerals line
+                    let min_points: PlotPoints = income
+                        .points
+                        .iter()
+                        .map(|&(t, m, _)| [t, m])
+                        .collect();
+                    plot_ui.line(
+                        Line::new(min_points)
+                            .name(format!("{} Min/min", name))
+                            .color(color)
+                            .width(2.0),
+                    );
+
+                    // Gas line (lighter shade)
+                    let gas_points: PlotPoints = income
+                        .points
+                        .iter()
+                        .map(|&(t, _, g)| [t, g])
+                        .collect();
+                    let gas_color =
+                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 140);
+                    plot_ui.line(
+                        Line::new(gas_points)
+                            .name(format!("{} Gas/min", name))
                             .color(gas_color)
                             .width(1.5),
                     );
