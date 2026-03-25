@@ -326,6 +326,7 @@ pub struct UnitCount {
 
 pub fn compute_unit_counts(commands: &[Command], player_id: u8) -> Vec<UnitCount> {
     let mut counts: HashMap<u16, u32> = HashMap::new();
+    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
 
     for cmd in commands {
         if cmd.player_id != player_id {
@@ -342,6 +343,13 @@ pub fn compute_unit_counts(commands: &[Command], player_id: u8) -> Vec<UnitCount
 
         if let Some(uid) = unit_id {
             if unit_name(uid) != "Unknown" {
+                // Dedup: skip commands for the same unit within the spam window
+                if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
+                    if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
+                        continue;
+                    }
+                }
+                last_frame_for_unit.insert(uid, cmd.frame);
                 *counts.entry(uid).or_insert(0) += 1;
             }
         }
@@ -578,6 +586,7 @@ pub struct UnitProductionSpan {
 
 pub fn compute_production_spans(commands: &[Command], player_id: u8) -> Vec<UnitProductionSpan> {
     let mut spans: HashMap<u16, (String, bool, f64, f64, u32)> = HashMap::new();
+    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
 
     for cmd in commands {
         if cmd.player_id != player_id {
@@ -597,6 +606,15 @@ pub fn compute_production_spans(commands: &[Command], player_id: u8) -> Vec<Unit
             if name == "Unknown" {
                 continue;
             }
+
+            // Dedup: skip commands for the same unit within the spam window
+            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
+                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
+                    continue;
+                }
+            }
+            last_frame_for_unit.insert(uid, cmd.frame);
+
             let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
             let entry =
                 spans
