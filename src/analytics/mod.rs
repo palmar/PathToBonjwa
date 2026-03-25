@@ -657,26 +657,40 @@ pub fn compute_resource_estimate(commands: &[Command], player_id: u8) -> Resourc
     let mut total_minerals: u32 = 0;
     let mut total_gas: u32 = 0;
     let mut curve = vec![(0.0, 0u32, 0u32)];
+    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
 
     for cmd in commands {
         if cmd.player_id != player_id {
             continue;
         }
 
-        let (minerals, gas) = match &cmd.cmd {
+        let unit_id_opt = match &cmd.cmd {
             CmdType::Build { unit_id, .. }
             | CmdType::Train { unit_id }
             | CmdType::UnitMorph { unit_id }
-            | CmdType::BuildingMorph { unit_id } => {
-                if let Some(cost) = costs::unit_cost(*unit_id) {
-                    (cost.minerals, cost.gas)
-                } else {
+            | CmdType::BuildingMorph { unit_id } => Some(*unit_id),
+            _ => None,
+        };
+
+        let (minerals, gas) = if let Some(uid) = unit_id_opt {
+            // Dedup: skip spam commands for the same unit
+            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
+                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
                     continue;
                 }
             }
-            CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
-            CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
-            _ => continue,
+            last_frame_for_unit.insert(uid, cmd.frame);
+            if let Some(cost) = costs::unit_cost(uid) {
+                (cost.minerals, cost.gas)
+            } else {
+                continue;
+            }
+        } else {
+            match &cmd.cmd {
+                CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
+                CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
+                _ => continue,
+            }
         };
 
         if minerals == 0 && gas == 0 {
@@ -719,26 +733,40 @@ pub fn compute_resource_income(
 
     let mut min_buckets = vec![0.0f64; total_minutes];
     let mut gas_buckets = vec![0.0f64; total_minutes];
+    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
 
     for cmd in commands {
         if cmd.player_id != player_id {
             continue;
         }
 
-        let (minerals, gas) = match &cmd.cmd {
+        let unit_id_opt = match &cmd.cmd {
             CmdType::Build { unit_id, .. }
             | CmdType::Train { unit_id }
             | CmdType::UnitMorph { unit_id }
-            | CmdType::BuildingMorph { unit_id } => {
-                if let Some(cost) = costs::unit_cost(*unit_id) {
-                    (cost.minerals, cost.gas)
-                } else {
+            | CmdType::BuildingMorph { unit_id } => Some(*unit_id),
+            _ => None,
+        };
+
+        let (minerals, gas) = if let Some(uid) = unit_id_opt {
+            // Dedup: skip spam commands for the same unit
+            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
+                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
                     continue;
                 }
             }
-            CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
-            CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
-            _ => continue,
+            last_frame_for_unit.insert(uid, cmd.frame);
+            if let Some(cost) = costs::unit_cost(uid) {
+                (cost.minerals, cost.gas)
+            } else {
+                continue;
+            }
+        } else {
+            match &cmd.cmd {
+                CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
+                CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
+                _ => continue,
+            }
         };
 
         if minerals == 0 && gas == 0 {

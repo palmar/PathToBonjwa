@@ -765,15 +765,15 @@ impl App {
                 }
             });
 
-        // ─── Resource spending chart ─────────────────────────────────────
+        // ─── Mineral spending chart ─────────────────────────────────────
         ui.add_space(16.0);
-        bw_section_heading(ui, "Cumulative Resource Spending");
+        bw_section_heading(ui, "Cumulative Mineral Spending");
 
-        Plot::new("resource_chart")
+        Plot::new("mineral_spending_chart")
             .height(plot_height)
             .allow_scroll(false)
             .x_axis_label("Seconds")
-            .y_axis_label("Resources Spent")
+            .y_axis_label("Minerals Spent")
             .legend(egui_plot::Legend::default())
             .show(ui, |plot_ui| {
                 for (pid, name, res) in &cached.resource_estimates {
@@ -782,7 +782,6 @@ impl App {
                         .map(|p| p.color.to_egui())
                         .unwrap_or(egui::Color32::WHITE);
 
-                    // Minerals line
                     let min_points: PlotPoints = res
                         .spending_curve
                         .iter()
@@ -790,37 +789,53 @@ impl App {
                         .collect();
                     plot_ui.line(
                         Line::new(min_points)
-                            .name(format!("{} Minerals", name))
+                            .name(format!("{}", name))
                             .color(color)
                             .width(2.0),
                     );
+                }
+            });
 
-                    // Gas line (lighter)
+        // ─── Gas spending chart ──────────────────────────────────────────
+        ui.add_space(16.0);
+        bw_section_heading(ui, "Cumulative Gas Spending");
+
+        Plot::new("gas_spending_chart")
+            .height(plot_height)
+            .allow_scroll(false)
+            .x_axis_label("Seconds")
+            .y_axis_label("Gas Spent")
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                for (pid, name, res) in &cached.resource_estimates {
+                    let player = replay.players.iter().find(|p| p.player_id == *pid);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
+
                     let gas_points: PlotPoints = res
                         .spending_curve
                         .iter()
                         .map(|&(t, _, g)| [t, g as f64])
                         .collect();
-                    let gas_color =
-                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 140);
                     plot_ui.line(
                         Line::new(gas_points)
-                            .name(format!("{} Gas", name))
-                            .color(gas_color)
-                            .width(1.5),
+                            .name(format!("{}", name))
+                            .color(color)
+                            .width(2.0),
                     );
                 }
             });
 
-        // ─── Resource income chart (minerals/gas per minute) ─────────
+        // ─── Mineral income chart ────────────────────────────────────────
         ui.add_space(16.0);
-        bw_section_heading(ui, "Resource Income (per Minute)");
+        bw_section_heading(ui, "Mineral Income (per Minute)");
 
-        Plot::new("resource_income_chart")
+        Plot::new("mineral_income_chart")
             .height(plot_height)
             .allow_scroll(false)
             .x_axis_label("Seconds")
-            .y_axis_label("Resources / Minute")
+            .y_axis_label("Minerals / Minute")
             .legend(egui_plot::Legend::default())
             .show(ui, |plot_ui| {
                 for (pid, name, income) in &cached.resource_income_data {
@@ -829,7 +844,6 @@ impl App {
                         .map(|p| p.color.to_egui())
                         .unwrap_or(egui::Color32::WHITE);
 
-                    // Minerals line
                     let min_points: PlotPoints = income
                         .points
                         .iter()
@@ -837,24 +851,40 @@ impl App {
                         .collect();
                     plot_ui.line(
                         Line::new(min_points)
-                            .name(format!("{} Min/min", name))
+                            .name(format!("{}", name))
                             .color(color)
                             .width(2.0),
                     );
+                }
+            });
 
-                    // Gas line (lighter shade)
+        // ─── Gas income chart ────────────────────────────────────────────
+        ui.add_space(16.0);
+        bw_section_heading(ui, "Gas Income (per Minute)");
+
+        Plot::new("gas_income_chart")
+            .height(plot_height)
+            .allow_scroll(false)
+            .x_axis_label("Seconds")
+            .y_axis_label("Gas / Minute")
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                for (pid, name, income) in &cached.resource_income_data {
+                    let player = replay.players.iter().find(|p| p.player_id == *pid);
+                    let color = player
+                        .map(|p| p.color.to_egui())
+                        .unwrap_or(egui::Color32::WHITE);
+
                     let gas_points: PlotPoints = income
                         .points
                         .iter()
                         .map(|&(t, _, g)| [t, g])
                         .collect();
-                    let gas_color =
-                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 140);
                     plot_ui.line(
                         Line::new(gas_points)
-                            .name(format!("{} Gas/min", name))
-                            .color(gas_color)
-                            .width(1.5),
+                            .name(format!("{}", name))
+                            .color(color)
+                            .width(2.0),
                     );
                 }
             });
