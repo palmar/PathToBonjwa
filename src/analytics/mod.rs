@@ -340,8 +340,8 @@ pub fn compute_hotkey_stats(commands: &[Command], player_id: u8) -> HotkeyStats 
 
 #[derive(Debug, Clone)]
 pub struct SupplyCurve {
-    /// (time_seconds, supply_used, supply_max) at each production event
-    pub points: Vec<(f64, f64, f64)>,
+    /// (time_seconds, worker_supply, army_supply, supply_max) at each production event
+    pub points: Vec<(f64, f64, f64, f64)>,
 }
 
 pub fn compute_supply_curve(
@@ -350,8 +350,11 @@ pub fn compute_supply_curve(
     race: &Race,
     total_frames: u32,
 ) -> SupplyCurve {
-    let (mut used, mut max) = costs::starting_supply(race);
-    let mut points = vec![(0.0, used, max)];
+    let (starting_used, mut max) = costs::starting_supply(race);
+    // Starting units are all workers (4 SCVs/Drones/Probes)
+    let mut worker_supply = starting_used;
+    let mut army_supply = 0.0;
+    let mut points = vec![(0.0, worker_supply, army_supply, max)];
 
     for cmd in commands {
         if cmd.player_id != player_id {
@@ -372,17 +375,19 @@ pub fn compute_supply_curve(
                 if cost.supply < 0.0 {
                     // Supply provider
                     max -= cost.supply; // subtracting negative = adding
+                } else if costs::is_worker(uid) {
+                    worker_supply += cost.supply;
                 } else {
-                    used += cost.supply;
+                    army_supply += cost.supply;
                 }
-                points.push((time, used, max));
+                points.push((time, worker_supply, army_supply, max));
             }
         }
     }
 
     // Add final point at game end
     let end_time = total_frames as f64 / FRAMES_PER_SECOND;
-    points.push((end_time, used, max));
+    points.push((end_time, worker_supply, army_supply, max));
 
     SupplyCurve { points }
 }

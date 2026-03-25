@@ -683,9 +683,9 @@ impl App {
                 }
             });
 
-        // ─── Supply curve chart ──────────────────────────────────────────
+        // ─── Supply flow chart (stacked worker/army) ─────────────────────
         ui.add_space(16.0);
-        bw_section_heading(ui, "Supply Over Time");
+        bw_section_heading(ui, "Supply Over Time (Worker / Army)");
 
         Plot::new("supply_chart")
             .height(plot_height)
@@ -700,19 +700,44 @@ impl App {
                         .map(|p| p.color.to_egui())
                         .unwrap_or(egui::Color32::WHITE);
 
-                    // Supply used line
-                    let used_points: PlotPoints =
-                        curve.points.iter().map(|&(t, used, _)| [t, used]).collect();
+                    // Stacked area: total (worker + army) filled from 0 with army shade
+                    let total_points: PlotPoints = curve
+                        .points
+                        .iter()
+                        .map(|&(t, w, a, _)| [t, w + a])
+                        .collect();
+                    let army_color =
+                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
                     plot_ui.line(
-                        Line::new(used_points)
-                            .name(format!("{} Used", name))
-                            .color(color)
-                            .width(2.0),
+                        Line::new(total_points)
+                            .name(format!("{} Army", name))
+                            .color(army_color)
+                            .fill(0.0)
+                            .width(1.5),
                     );
 
-                    // Supply max line (dashed effect via lighter color)
-                    let max_points: PlotPoints =
-                        curve.points.iter().map(|&(t, _, max)| [t, max]).collect();
+                    // Worker area filled from 0 (covers bottom portion)
+                    let worker_points: PlotPoints = curve
+                        .points
+                        .iter()
+                        .map(|&(t, w, _, _)| [t, w])
+                        .collect();
+                    let worker_color =
+                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 100);
+                    plot_ui.line(
+                        Line::new(worker_points)
+                            .name(format!("{} Workers", name))
+                            .color(worker_color)
+                            .fill(0.0)
+                            .width(1.5),
+                    );
+
+                    // Supply max line (transparent outline)
+                    let max_points: PlotPoints = curve
+                        .points
+                        .iter()
+                        .map(|&(t, _, _, max)| [t, max])
+                        .collect();
                     let max_color =
                         egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
                     plot_ui.line(

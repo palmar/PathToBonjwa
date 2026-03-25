@@ -131,6 +131,11 @@ pub fn unit_cost(id: u16) -> Option<UnitCost> {
     })
 }
 
+/// Returns true if the unit is a worker (SCV, Drone, Probe).
+pub fn is_worker(id: u16) -> bool {
+    matches!(id, 0x07 | 0x29 | 0x40)
+}
+
 /// Returns the starting supply for a race (workers + base).
 /// Terran: 4 SCVs + CC = 4 used / 10 max
 /// Zerg: 4 Drones + Overlord + Hatchery = 4 used / 9 max
