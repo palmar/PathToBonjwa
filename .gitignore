@@ -9,6 +9,9 @@
 *.swo
 *~
 
+# Test replay files
+*.rep
+
 # OS
 .DS_Store
 Thumbs.db
