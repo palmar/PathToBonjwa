@@ -20,12 +20,17 @@ pub struct ApmData {
 fn is_player_action(cmd: &CmdType) -> bool {
     !matches!(
         cmd,
-        CmdType::KeepAlive | CmdType::Other { .. } | CmdType::Chat { .. }
+        CmdType::KeepAlive
+            | CmdType::Other { .. }
+            | CmdType::Chat { .. }
+            | CmdType::LeaveGame { .. }
+            | CmdType::MinimapPing { .. }
     )
 }
 
 /// Returns true if the command should be filtered out for EAPM.
-/// Simplified EAPM: filters redundant selects, spam clicks, fast cancels.
+/// Filters redundant selects, spam clicks, fast cancels, worker training spam,
+/// repeated right-clicks, and micro-interval spam.
 fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
     let prev = match prev {
         Some(p) => p,
@@ -34,9 +39,16 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
 
     let delta = cmd.frame.saturating_sub(prev.frame);
 
-    // Fast selection spam (< 8 frames apart, both selections)
-    if delta <= 8 && is_selection_changer(&cmd.cmd) && is_selection_changer(&prev.cmd) {
-        // Allow double-tap hotkey for centering
+    // Micro-interval spam: any two actions within 2 frames (~84ms) are almost
+    // certainly double-registrations or hardware artifacts.
+    if delta <= 2 {
+        return true;
+    }
+
+    // Selection cycling spam (< 28 frames, ~1.2s): rapidly switching selections
+    // without issuing orders is pure APM padding.
+    if delta <= 28 && is_selection_changer(&cmd.cmd) && is_selection_changer(&prev.cmd) {
+        // Allow double-tap hotkey for centering camera
         if let (
             CmdType::Hotkey {
                 hotkey_type: HotkeyAction::Select,
@@ -49,40 +61,98 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
         ) = (&cmd.cmd, &prev.cmd)
         {
             if g1 == g2 {
-                return false; // Double-tap is OK
+                return false; // Double-tap same group is intentional (center view)
             }
-        }
-        // Allow SelectAdd/SelectRemove near other selections
-        if matches!(cmd.cmd, CmdType::Select { .. }) {
-            // Only raw Select is ineffective here, not hotkey selects
         }
         return true;
     }
 
-    // Fast cancel (< 20 frames)
-    if delta <= 20 {
+    // Worker training spam (< 36 frames, ~1.5s): rapidly queuing the same worker
+    // type (e.g. probe spam). One click per production cycle is sufficient.
+    if delta <= 36 {
+        if let (CmdType::Train { unit_id: id1 }, CmdType::Train { unit_id: id2 }) =
+            (&cmd.cmd, &prev.cmd)
+        {
+            if id1 == id2 && costs::is_worker(*id1) {
+                return true;
+            }
+        }
+    }
+
+    // Right-click position spam (< 12 frames, ~0.5s): repeated right-clicks to
+    // the same approximate location (within 4-tile radius).
+    if delta <= 12 {
+        if let (
+            CmdType::RightClick {
+                x: x1, y: y1, ..
+            },
+            CmdType::RightClick {
+                x: x2, y: y2, ..
+            },
+        ) = (&cmd.cmd, &prev.cmd)
+        {
+            let dx = (*x1 as i32 - *x2 as i32).abs();
+            let dy = (*y1 as i32 - *y2 as i32).abs();
+            if dx <= 128 && dy <= 128 {
+                // ~4 tiles in BW pixel coords (32px/tile)
+                return true;
+            }
+        }
+    }
+
+    // Targeted order spam (< 12 frames): same order type to nearby location.
+    if delta <= 12 {
+        if let (
+            CmdType::TargetedOrder {
+                x: x1,
+                y: y1,
+                order_id: o1,
+                ..
+            },
+            CmdType::TargetedOrder {
+                x: x2,
+                y: y2,
+                order_id: o2,
+                ..
+            },
+        ) = (&cmd.cmd, &prev.cmd)
+        {
+            if o1 == o2 {
+                let dx = (*x1 as i32 - *x2 as i32).abs();
+                let dy = (*y1 as i32 - *y2 as i32).abs();
+                if dx <= 128 && dy <= 128 {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Fast cancel (< 30 frames, ~1.3s): action immediately cancelled = misclick.
+    if delta <= 30 {
         match (&prev.cmd, &cmd.cmd) {
             (CmdType::Train { .. } | CmdType::TrainFighter, CmdType::CancelTrain) => return true,
             (CmdType::UnitMorph { .. } | CmdType::BuildingMorph { .. }, CmdType::CancelMorph) => {
                 return true
             }
+            (CmdType::Build { .. }, CmdType::CancelBuild) => return true,
             (CmdType::Upgrade { .. }, CmdType::CancelUpgrade) => return true,
             (CmdType::Tech { .. }, CmdType::CancelTech) => return true,
             _ => {}
         }
     }
 
-    // Fast repetition of same command (< 10 frames)
-    if delta <= 10 {
+    // Fast repetition of same command (< 20 frames, ~0.84s)
+    if delta <= 20 {
         match (&prev.cmd, &cmd.cmd) {
             (CmdType::Stop, CmdType::Stop) | (CmdType::HoldPosition, CmdType::HoldPosition) => {
                 return true
             }
+            (CmdType::ReturnCargo, CmdType::ReturnCargo) => return true,
             _ => {}
         }
     }
 
-    // Repeated hotkey assign/add
+    // Repeated hotkey assign/add to same group
     if let (
         CmdType::Hotkey {
             hotkey_type: ht1,
