@@ -254,16 +254,27 @@ pub struct BuildOrderEntry {
     pub time_str: String,
     pub unit_name: String,
     pub unit_id: u16,
+    /// Current supply used / supply max at time of this entry
+    pub supply_used: f64,
+    pub supply_max: f64,
 }
 
 /// Dedup window: commands for the same unit within this many frames are collapsed.
 /// ~1 second at 23.81 fps — filters hotkey spam while preserving intentional queues.
 const BUILD_ORDER_DEDUP_FRAMES: u32 = 24;
 
-pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrderEntry> {
+pub fn extract_build_order(
+    commands: &[Command],
+    player_id: u8,
+    race: &Race,
+) -> Vec<BuildOrderEntry> {
     let mut entries = Vec::new();
     // Track last frame we accepted each unit_id to deduplicate spam
     let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
+
+    // Track running supply (mirrors compute_supply_curve logic)
+    let (starting_used, mut supply_max) = costs::starting_supply(race);
+    let mut supply_used = starting_used;
 
     for cmd in commands {
         if cmd.player_id != player_id {
@@ -279,11 +290,6 @@ pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrde
         };
 
         if let Some(uid) = unit_id {
-            // Filter out worker production (Probe/SCV/Drone) — not meaningful build order data
-            if costs::is_worker(uid) {
-                continue;
-            }
-
             let name = unit_name(uid);
             if name == "Unknown" {
                 continue;
@@ -295,8 +301,40 @@ pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrde
                     continue;
                 }
             }
-
             last_frame_for_unit.insert(uid, cmd.frame);
+
+            // Update supply tracking for ALL units (including workers)
+            if let Some(cost) = costs::unit_cost(uid) {
+                let supply = if costs::is_pair_unit(uid) {
+                    cost.supply * 2.0
+                } else {
+                    cost.supply
+                };
+
+                if supply < 0.0 {
+                    supply_max = (supply_max - supply).min(200.0);
+                } else {
+                    supply_used += supply;
+                }
+
+                // Zerg drone consumed for building
+                if matches!(race, Race::Zerg)
+                    && matches!(&cmd.cmd, CmdType::Build { .. })
+                    && costs::is_zerg_drone_building(uid)
+                {
+                    supply_used = (supply_used - 1.0).max(0.0);
+                }
+
+                // Clamp
+                if supply_used > supply_max {
+                    supply_used = supply_max;
+                }
+            }
+
+            // Filter out worker production from the build order display
+            if costs::is_worker(uid) {
+                continue;
+            }
 
             let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
             let mins = (secs / 60.0) as u32;
@@ -306,6 +344,8 @@ pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrde
                 time_str: format!("{}:{:02}", mins, s),
                 unit_name: name.to_string(),
                 unit_id: uid,
+                supply_used,
+                supply_max,
             });
         }
     }

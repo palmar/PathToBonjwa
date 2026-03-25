@@ -259,7 +259,7 @@ impl App {
             build_orders.push((
                 pid,
                 name.clone(),
-                analytics::extract_build_order(&replay.commands, pid),
+                analytics::extract_build_order(&replay.commands, pid, &player.race),
             ));
             unit_counts.push((
                 pid,
@@ -472,6 +472,8 @@ impl App {
             None => return,
         };
 
+        // Ensure content stretches to full available width
+        ui.set_min_width(ui.available_width());
         ui.add_space(8.0);
 
         // ─── Build orders ────────────────────────────────────────────────
@@ -491,11 +493,12 @@ impl App {
             .default_open(true)
             .show(ui, |ui| {
                 egui::Grid::new(format!("bo_{}", pid))
-                    .num_columns(2)
-                    .spacing([20.0, 3.0])
+                    .num_columns(3)
+                    .spacing([16.0, 3.0])
                     .striped(true)
                     .show(ui, |ui| {
                         ui.label(egui::RichText::new("Time").strong());
+                        ui.label(egui::RichText::new("Supply").strong());
                         ui.label(egui::RichText::new("Unit / Building").strong());
                         ui.end_row();
 
@@ -504,6 +507,15 @@ impl App {
                                 egui::RichText::new(&entry.time_str)
                                     .color(egui::Color32::GRAY)
                                     .monospace(),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}/{}",
+                                    entry.supply_used as u32,
+                                    entry.supply_max as u32
+                                ))
+                                .color(BW_TEXT_DIM)
+                                .monospace(),
                             );
                             let style = if parser::is_building(entry.unit_id) {
                                 egui::RichText::new(&entry.unit_name)
@@ -515,6 +527,7 @@ impl App {
                             ui.end_row();
                         }
                         if entries.len() > 50 {
+                            ui.label("");
                             ui.label("");
                             ui.label(
                                 egui::RichText::new(format!("... and {} more", entries.len() - 50))
