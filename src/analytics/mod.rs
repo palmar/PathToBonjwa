@@ -431,6 +431,9 @@ pub fn compute_supply_curve(
     let mut army_supply = 0.0;
     let mut points = vec![(0.0, worker_supply, army_supply, max)];
 
+    // Dedup: track last accepted frame per unit_id to filter spam clicks
+    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
+
     for cmd in commands {
         if cmd.player_id != player_id {
             continue;
@@ -446,15 +449,54 @@ pub fn compute_supply_curve(
 
         if let Some(uid) = unit_id {
             if let Some(cost) = costs::unit_cost(uid) {
-                let time = cmd.frame as f64 / FRAMES_PER_SECOND;
-                if cost.supply < 0.0 {
-                    // Supply provider — cap at 200 (BW hard limit)
-                    max = (max - cost.supply).min(200.0);
-                } else if costs::is_worker(uid) {
-                    worker_supply += cost.supply;
-                } else {
-                    army_supply += cost.supply;
+                // Dedup: skip if same unit type within dedup window (~1 second)
+                if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
+                    if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
+                        continue;
+                    }
                 }
+                last_frame_for_unit.insert(uid, cmd.frame);
+
+                let time = cmd.frame as f64 / FRAMES_PER_SECOND;
+
+                // Pair units (Zergling, Scourge): one Train produces two units
+                let supply = if costs::is_pair_unit(uid) {
+                    cost.supply * 2.0
+                } else {
+                    cost.supply
+                };
+
+                if supply < 0.0 {
+                    // Supply provider — cap at 200 (BW hard limit)
+                    max = (max - supply).min(200.0);
+                } else if costs::is_worker(uid) {
+                    worker_supply += supply;
+                } else {
+                    army_supply += supply;
+                }
+
+                // Zerg Build command: drone is consumed to become the building
+                if matches!(race, Race::Zerg)
+                    && matches!(&cmd.cmd, CmdType::Build { .. })
+                    && costs::is_zerg_drone_building(uid)
+                {
+                    worker_supply = (worker_supply - 1.0).max(0.0);
+                }
+
+                // Clamp supply used to supply max (can't use more than available)
+                let total_used = worker_supply + army_supply;
+                if total_used > max {
+                    let excess = total_used - max;
+                    // Reduce army first (combat losses are more common than worker losses)
+                    if army_supply >= excess {
+                        army_supply -= excess;
+                    } else {
+                        let remainder = excess - army_supply;
+                        army_supply = 0.0;
+                        worker_supply = (worker_supply - remainder).max(0.0);
+                    }
+                }
+
                 points.push((time, worker_supply, army_supply, max));
             }
         }

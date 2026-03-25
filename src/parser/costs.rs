@@ -136,6 +136,20 @@ pub fn is_worker(id: u16) -> bool {
     matches!(id, 0x07 | 0x29 | 0x40)
 }
 
+/// Returns true if a single Train command produces a pair of units (Zergling, Scourge).
+pub fn is_pair_unit(id: u16) -> bool {
+    matches!(id, 0x25 | 0x2F)
+}
+
+/// Returns true if the unit is a Zerg building constructed by morphing a Drone
+/// (i.e. via Build command, not BuildingMorph like Lair/Hive/Sunken/Spore).
+pub fn is_zerg_drone_building(id: u16) -> bool {
+    matches!(
+        id,
+        0x83 | 0x86 | 0x87 | 0x88 | 0x8A | 0x8B | 0x8C | 0x8D | 0x8E | 0x8F | 0x95
+    )
+}
+
 /// Returns the starting supply for a race (workers + base).
 /// Terran: 4 SCVs + CC = 4 used / 10 max
 /// Zerg: 4 Drones + Overlord + Hatchery = 4 used / 9 max
