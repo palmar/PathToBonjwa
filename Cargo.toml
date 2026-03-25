@@ -1,6 +1,6 @@
 [package]
 name = "pathtobonjwa"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "Brood War replay analyzer — helping players improve through data-driven insights"
 license = "MIT"

@@ -623,8 +623,9 @@ impl<'a> SectionReader<'a> {
     }
 
     fn read_section_modern(&mut self, expected_size: usize) -> Result<Vec<u8>, String> {
-        // Modern121 sections have a body_size prefix before checksum+chunk_count
-        if self.format == RepFormat::Modern121 {
+        // Modern121 sections have a body_size prefix before checksum+chunk_count,
+        // but only for S1+ (Header, Commands). S0 (Replay ID) has no body_size prefix.
+        if self.format == RepFormat::Modern121 && self.sections_read >= 2 {
             let _body_size = self.read_u32_raw()?;
         }
         // checksum (4 bytes) - skip
