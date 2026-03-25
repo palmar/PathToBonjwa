@@ -279,6 +279,11 @@ pub fn extract_build_order(commands: &[Command], player_id: u8) -> Vec<BuildOrde
         };
 
         if let Some(uid) = unit_id {
+            // Filter out worker production (Probe/SCV/Drone) — not meaningful build order data
+            if costs::is_worker(uid) {
+                continue;
+            }
+
             let name = unit_name(uid);
             if name == "Unknown" {
                 continue;
