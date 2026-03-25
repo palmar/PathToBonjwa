@@ -525,6 +525,7 @@ impl App {
         // APM chart
         Plot::new("apm_chart")
             .height(plot_height)
+            .allow_scroll(false)
             .x_axis_label("Minute")
             .y_axis_label("Actions per Minute")
             .legend(egui_plot::Legend::default())
@@ -552,6 +553,7 @@ impl App {
 
         Plot::new("eapm_chart")
             .height(plot_height)
+            .allow_scroll(false)
             .x_axis_label("Minute")
             .y_axis_label("Effective APM")
             .legend(egui_plot::Legend::default())
@@ -580,6 +582,7 @@ impl App {
 
         Plot::new("supply_chart")
             .height(plot_height)
+            .allow_scroll(false)
             .x_axis_label("Seconds")
             .y_axis_label("Supply")
             .legend(egui_plot::Legend::default())
@@ -622,6 +625,7 @@ impl App {
 
         Plot::new("resource_chart")
             .height(plot_height)
+            .allow_scroll(false)
             .x_axis_label("Seconds")
             .y_axis_label("Resources Spent")
             .legend(egui_plot::Legend::default())
