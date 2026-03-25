@@ -15,7 +15,7 @@ fn main() -> eframe::Result {
         "PathToBonjwa — BW Replay Analyzer",
         options,
         Box::new(|cc| {
-            cc.egui_ctx.set_visuals(eframe::egui::Visuals::dark());
+            cc.egui_ctx.set_visuals(ui::bw_visuals());
             Ok(Box::new(ui::App::default()))
         }),
     )

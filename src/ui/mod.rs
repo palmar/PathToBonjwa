@@ -9,6 +9,92 @@ use crate::analytics::{
 };
 use crate::parser::{self, Replay};
 
+// ─── BW-inspired color palette ──────────────────────────────────────────────
+/// Deep space black — main background
+const BW_BG: egui::Color32 = egui::Color32::from_rgb(8, 12, 18);
+/// Slightly lighter panel background
+const BW_PANEL: egui::Color32 = egui::Color32::from_rgb(14, 20, 30);
+/// Panel/header darker stripe
+const BW_PANEL_DARK: egui::Color32 = egui::Color32::from_rgb(10, 15, 24);
+/// Teal accent — primary highlight (BW console feel)
+const BW_TEAL: egui::Color32 = egui::Color32::from_rgb(0, 180, 160);
+/// Brighter teal for hover/active
+const BW_TEAL_BRIGHT: egui::Color32 = egui::Color32::from_rgb(0, 220, 200);
+/// Cyan accent for interactive elements
+const BW_CYAN: egui::Color32 = egui::Color32::from_rgb(0, 200, 255);
+/// Muted border color
+const BW_BORDER: egui::Color32 = egui::Color32::from_rgb(30, 50, 60);
+/// Bright border for focused elements
+const BW_BORDER_BRIGHT: egui::Color32 = egui::Color32::from_rgb(40, 80, 90);
+/// Default text — slightly blue-tinted white
+const BW_TEXT: egui::Color32 = egui::Color32::from_rgb(180, 200, 210);
+/// Dim text for secondary info
+const BW_TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(100, 120, 130);
+/// Header/title text
+const BW_TEXT_HEADING: egui::Color32 = egui::Color32::from_rgb(0, 210, 190);
+
+/// Build the full egui Visuals for a Starcraft: BW retro look.
+pub fn bw_visuals() -> egui::Visuals {
+    let mut v = egui::Visuals::dark();
+
+    // Window / panel backgrounds
+    v.panel_fill = BW_BG;
+    v.window_fill = BW_PANEL;
+    v.faint_bg_color = BW_PANEL_DARK;
+    v.extreme_bg_color = egui::Color32::from_rgb(6, 9, 14);
+
+    // Stripes in grids
+    v.striped = true;
+
+    // Widget visuals
+    let corner_radius = egui::CornerRadius::same(2);
+
+    v.widgets.noninteractive.bg_fill = BW_PANEL;
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BW_BORDER);
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, BW_TEXT);
+    v.widgets.noninteractive.corner_radius = corner_radius;
+
+    v.widgets.inactive.bg_fill = egui::Color32::from_rgb(16, 26, 36);
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BW_BORDER);
+    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, BW_TEXT);
+    v.widgets.inactive.corner_radius = corner_radius;
+
+    v.widgets.hovered.bg_fill = egui::Color32::from_rgb(20, 36, 48);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BW_BORDER_BRIGHT);
+    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, BW_TEAL_BRIGHT);
+    v.widgets.hovered.corner_radius = corner_radius;
+
+    v.widgets.active.bg_fill = egui::Color32::from_rgb(0, 50, 50);
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.5, BW_TEAL);
+    v.widgets.active.fg_stroke = egui::Stroke::new(1.0, BW_TEAL_BRIGHT);
+    v.widgets.active.corner_radius = corner_radius;
+
+    v.widgets.open.bg_fill = egui::Color32::from_rgb(14, 30, 38);
+    v.widgets.open.bg_stroke = egui::Stroke::new(1.0, BW_TEAL);
+    v.widgets.open.fg_stroke = egui::Stroke::new(1.0, BW_TEAL_BRIGHT);
+    v.widgets.open.corner_radius = corner_radius;
+
+    // Selection
+    v.selection.bg_fill = egui::Color32::from_rgb(0, 60, 55);
+    v.selection.stroke = egui::Stroke::new(1.0, BW_TEAL);
+
+    // Separator lines
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BW_BORDER);
+
+    // Hyperlinks
+    v.hyperlink_color = BW_CYAN;
+
+    // Window shadow
+    v.window_shadow = egui::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(120),
+    };
+
+    v
+}
+
 // ─── App state ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -96,6 +182,28 @@ impl App {
             message: message.into(),
         });
     }
+}
+
+/// Draw a BW-styled section heading with a teal accent bar on the left.
+fn bw_section_heading(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        // Teal accent bar
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 18.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 1.0, BW_TEAL);
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(title)
+                .strong()
+                .size(15.0)
+                .color(BW_TEXT_HEADING),
+        );
+    });
+    // Thin separator line
+    let rect = ui.available_rect_before_wrap();
+    let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
+    ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
+    ui.add_space(4.0);
 }
 
 impl App {
@@ -219,11 +327,38 @@ impl App {
     fn render_welcome(&self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.add_space(80.0);
-            ui.heading("PathToBonjwa");
+
+            // Title with BW glow feel
+            ui.label(
+                egui::RichText::new("PathToBonjwa")
+                    .strong()
+                    .size(28.0)
+                    .color(BW_TEAL_BRIGHT),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("BROOD WAR REPLAY ANALYZER")
+                    .size(11.0)
+                    .color(BW_TEXT_DIM)
+                    .monospace(),
+            );
+
             ui.add_space(8.0);
-            ui.label("Brood War Replay Analyzer");
-            ui.add_space(40.0);
-            ui.label("Drop a .rep file here or click Open to load a replay");
+            // Decorative line
+            let rect = ui.available_rect_before_wrap();
+            let center_x = rect.center().x;
+            let line_rect = egui::Rect::from_min_size(
+                egui::pos2(center_x - 80.0, rect.min.y),
+                egui::vec2(160.0, 1.0),
+            );
+            ui.painter().rect_filled(line_rect, 0.0, BW_TEAL);
+            ui.add_space(8.0);
+
+            ui.add_space(30.0);
+            ui.label(
+                egui::RichText::new("Drop a .rep file here or click Open to load a replay")
+                    .color(BW_TEXT),
+            );
             ui.add_space(16.0);
         });
     }
@@ -231,16 +366,26 @@ impl App {
     fn render_summary(&self, ui: &mut egui::Ui, replay: &Replay) {
         ui.add_space(8.0);
 
-        // Matchup header
+        // Matchup header — styled with BW accent
         ui.horizontal(|ui| {
-            ui.heading(&replay.matchup);
+            // Teal accent bar
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 22.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 1.0, BW_TEAL);
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(&replay.matchup)
+                    .strong()
+                    .size(18.0)
+                    .color(BW_TEAL_BRIGHT),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("{}", replay.game_type)).color(egui::Color32::GRAY),
-                );
+                ui.label(egui::RichText::new(format!("{}", replay.game_type)).color(BW_TEXT_DIM));
             });
         });
-        ui.separator();
+        let rect = ui.available_rect_before_wrap();
+        let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
+        ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
+        ui.add_space(4.0);
 
         // APM summary
         if let Some(ref cached) = self.cached {
@@ -309,8 +454,7 @@ impl App {
             });
 
         ui.add_space(16.0);
-        ui.heading("Players");
-        ui.separator();
+        bw_section_heading(ui, "Players");
 
         egui::Grid::new("players")
             .num_columns(4)
@@ -343,8 +487,7 @@ impl App {
         ui.add_space(8.0);
 
         // ─── Build orders ────────────────────────────────────────────────
-        ui.heading("Build Orders");
-        ui.separator();
+        bw_section_heading(ui, "Build Orders");
 
         for (pid, name, entries) in &cached.build_orders {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
@@ -398,8 +541,7 @@ impl App {
 
         // ─── Unit production counts ──────────────────────────────────────
         ui.add_space(8.0);
-        ui.heading("Unit Production");
-        ui.separator();
+        bw_section_heading(ui, "Unit Production");
 
         for (pid, name, counts) in &cached.unit_counts {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
@@ -459,8 +601,7 @@ impl App {
 
         // ─── Hotkey stats ────────────────────────────────────────────────
         ui.add_space(8.0);
-        ui.heading("Hotkey Usage");
-        ui.separator();
+        bw_section_heading(ui, "Hotkey Usage");
 
         for (pid, name, stats) in &cached.hotkey_stats {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
@@ -516,9 +657,7 @@ impl App {
         };
 
         ui.add_space(8.0);
-        ui.heading("APM Over Time");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "APM Over Time");
 
         let plot_height = 250.0;
 
@@ -547,9 +686,7 @@ impl App {
             });
 
         ui.add_space(16.0);
-        ui.heading("EAPM Over Time");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "EAPM Over Time");
 
         Plot::new("eapm_chart")
             .height(plot_height)
@@ -576,9 +713,7 @@ impl App {
 
         // ─── Supply curve chart ──────────────────────────────────────────
         ui.add_space(16.0);
-        ui.heading("Supply Over Time");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "Supply Over Time");
 
         Plot::new("supply_chart")
             .height(plot_height)
@@ -619,9 +754,7 @@ impl App {
 
         // ─── Resource spending chart ─────────────────────────────────────
         ui.add_space(16.0);
-        ui.heading("Cumulative Resource Spending");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "Cumulative Resource Spending");
 
         Plot::new("resource_chart")
             .height(plot_height)
@@ -676,9 +809,7 @@ impl App {
         ui.add_space(8.0);
 
         // ─── Resource estimates ──────────────────────────────────────────
-        ui.heading("Resource Estimates");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "Resource Estimates");
 
         egui::Grid::new("resource_summary")
             .num_columns(3)
@@ -710,9 +841,7 @@ impl App {
 
         // ─── Production timeline (Gantt-style) ──────────────────────────
         ui.add_space(16.0);
-        ui.heading("Production Timeline");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "Production Timeline");
 
         let game_duration = replay.duration_secs;
 
@@ -779,9 +908,7 @@ impl App {
 
         // ─── Idle time / Macro gap analysis ─────────────────────────────
         ui.add_space(8.0);
-        ui.heading("Idle Time / Macro Gaps");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "Idle Time / Macro Gaps");
 
         for (pid, name, idle) in &cached.idle_analyses {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
@@ -903,9 +1030,7 @@ impl App {
 
     fn render_batch(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
-        ui.heading("Multi-Replay Batch View");
-        ui.separator();
-        ui.add_space(4.0);
+        bw_section_heading(ui, "Multi-Replay Batch View");
 
         ui.horizontal(|ui| {
             if ui.button("Load Folder").clicked() {
@@ -968,11 +1093,7 @@ impl App {
 
                 for (i, entry) in self.batch_replays.iter().enumerate() {
                     let selected = self.batch_selected == Some(i);
-                    let text_color = if selected {
-                        egui::Color32::from_rgb(0, 200, 255)
-                    } else {
-                        egui::Color32::WHITE
-                    };
+                    let text_color = if selected { BW_CYAN } else { BW_TEXT };
 
                     ui.label(
                         egui::RichText::new(&entry.filename)
@@ -1017,7 +1138,10 @@ impl App {
                 ui.add_space(8.0);
 
                 let entry = &self.batch_replays[idx];
-                ui.heading(format!("{} — {}", entry.replay.matchup, entry.filename));
+                bw_section_heading(
+                    ui,
+                    &format!("{} — {}", entry.replay.matchup, entry.filename),
+                );
 
                 // Quick stats
                 egui::Grid::new("batch_detail")
@@ -1108,8 +1232,8 @@ impl App {
 
     fn render_logs(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
+        bw_section_heading(ui, "Logs");
         ui.horizontal(|ui| {
-            ui.heading("Logs");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Clear").clicked() {
                     self.log_entries.clear();
@@ -1196,100 +1320,130 @@ impl eframe::App for App {
             self.load_replay(data);
         }
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("PathToBonjwa").strong().size(16.0));
-                ui.separator();
-                if ui.button("Open Replay").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("BW Replay", &["rep"])
-                        .pick_file()
-                    {
-                        self.log(LogLevel::Info, format!("Opening file: {}", path.display()));
-                        match std::fs::read(&path) {
-                            Ok(data) => self.load_replay(data),
-                            Err(e) => {
-                                let msg = format!("Failed to read file: {}", e);
-                                self.log(LogLevel::Error, &msg);
-                                self.error = Some(msg);
-                                self.replay = None;
-                                self.cached = None;
+        egui::TopBottomPanel::top("top_panel")
+            .frame(
+                egui::Frame::NONE
+                    .fill(BW_PANEL)
+                    .inner_margin(egui::Margin::symmetric(8, 6)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("PathToBonjwa")
+                            .strong()
+                            .size(16.0)
+                            .color(BW_TEAL),
+                    );
+                    ui.label(
+                        egui::RichText::new("BW Replay Analyzer")
+                            .size(10.0)
+                            .color(BW_TEXT_DIM),
+                    );
+                    ui.add_space(8.0);
+                    if ui.button("Open Replay").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("BW Replay", &["rep"])
+                            .pick_file()
+                        {
+                            self.log(LogLevel::Info, format!("Opening file: {}", path.display()));
+                            match std::fs::read(&path) {
+                                Ok(data) => self.load_replay(data),
+                                Err(e) => {
+                                    let msg = format!("Failed to read file: {}", e);
+                                    self.log(LogLevel::Error, &msg);
+                                    self.error = Some(msg);
+                                    self.replay = None;
+                                    self.cached = None;
+                                }
                             }
                         }
                     }
-                }
+                });
 
-                // Tab buttons
-                ui.separator();
-                if self.replay.is_some() {
-                    if ui
-                        .selectable_label(self.active_tab == Tab::Summary, "Summary")
-                        .clicked()
-                    {
-                        self.active_tab = Tab::Summary;
+                // ─── Tab bar ─────────────────────────────────────────────
+                ui.add_space(2.0);
+                // Draw a thin teal line above the tabs
+                let rect = ui.available_rect_before_wrap();
+                let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
+                ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    let tabs: &[(Tab, &str, bool)] = &[
+                        (Tab::Summary, "Summary", self.replay.is_some()),
+                        (Tab::Stats, "Stats", self.replay.is_some()),
+                        (Tab::Charts, "Charts", self.replay.is_some()),
+                        (Tab::Analytics, "Analytics", self.replay.is_some()),
+                        (Tab::Batch, "Batch", true),
+                        (Tab::Logs, "Logs", true),
+                    ];
+
+                    for &(tab, label, enabled) in tabs {
+                        if !enabled {
+                            continue;
+                        }
+                        let is_active = self.active_tab == tab;
+                        let text = if is_active {
+                            egui::RichText::new(label)
+                                .strong()
+                                .color(BW_TEAL_BRIGHT)
+                                .size(13.0)
+                        } else {
+                            egui::RichText::new(label).color(BW_TEXT_DIM).size(13.0)
+                        };
+
+                        let resp = ui.selectable_label(is_active, text);
+
+                        // Draw active indicator line under selected tab
+                        if is_active {
+                            let tab_rect = resp.rect;
+                            let indicator = egui::Rect::from_min_size(
+                                egui::pos2(tab_rect.min.x, tab_rect.max.y - 2.0),
+                                egui::vec2(tab_rect.width(), 2.0),
+                            );
+                            ui.painter().rect_filled(indicator, 0.0, BW_TEAL);
+                        }
+
+                        if resp.clicked() {
+                            self.active_tab = tab;
+                        }
                     }
-                    if ui
-                        .selectable_label(self.active_tab == Tab::Stats, "Stats")
-                        .clicked()
-                    {
-                        self.active_tab = Tab::Stats;
-                    }
-                    if ui
-                        .selectable_label(self.active_tab == Tab::Charts, "Charts")
-                        .clicked()
-                    {
-                        self.active_tab = Tab::Charts;
-                    }
-                    if ui
-                        .selectable_label(self.active_tab == Tab::Analytics, "Analytics")
-                        .clicked()
-                    {
-                        self.active_tab = Tab::Analytics;
-                    }
-                }
-                // Batch and Logs tabs always available
-                if ui
-                    .selectable_label(self.active_tab == Tab::Batch, "Batch")
-                    .clicked()
-                {
-                    self.active_tab = Tab::Batch;
-                }
-                if ui
-                    .selectable_label(self.active_tab == Tab::Logs, "Logs")
-                    .clicked()
-                {
-                    self.active_tab = Tab::Logs;
+                });
+            });
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::NONE
+                    .fill(BW_BG)
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
+            )
+            .show(ctx, |ui| {
+                if self.active_tab == Tab::Logs {
+                    self.render_logs(ui);
+                } else if self.active_tab == Tab::Batch {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        self.render_batch(ui);
+                    });
+                } else if let Some(ref error) = self.error {
+                    ui.add_space(20.0);
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 100, 100),
+                        format!("Error: {}", error),
+                    );
+                    ui.add_space(20.0);
+                    self.render_welcome(ui);
+                } else if let Some(replay) = self.replay.clone() {
+                    egui::ScrollArea::vertical().show(ui, |ui| match self.active_tab {
+                        Tab::Summary => self.render_summary(ui, &replay),
+                        Tab::Stats => self.render_stats(ui, &replay),
+                        Tab::Charts => self.render_charts(ui, &replay),
+                        Tab::Analytics => self.render_analytics(ui, &replay),
+                        Tab::Batch | Tab::Logs => {} // handled above
+                    });
+                } else {
+                    self.render_welcome(ui);
                 }
             });
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.active_tab == Tab::Logs {
-                self.render_logs(ui);
-            } else if self.active_tab == Tab::Batch {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.render_batch(ui);
-                });
-            } else if let Some(ref error) = self.error {
-                ui.add_space(20.0);
-                ui.colored_label(
-                    egui::Color32::from_rgb(255, 100, 100),
-                    format!("Error: {}", error),
-                );
-                ui.add_space(20.0);
-                self.render_welcome(ui);
-            } else if let Some(replay) = self.replay.clone() {
-                egui::ScrollArea::vertical().show(ui, |ui| match self.active_tab {
-                    Tab::Summary => self.render_summary(ui, &replay),
-                    Tab::Stats => self.render_stats(ui, &replay),
-                    Tab::Charts => self.render_charts(ui, &replay),
-                    Tab::Analytics => self.render_analytics(ui, &replay),
-                    Tab::Batch | Tab::Logs => {} // handled above
-                });
-            } else {
-                self.render_welcome(ui);
-            }
-        });
 
         // Show drag-and-drop overlay
         preview_files_being_dropped(ctx);
@@ -1304,15 +1458,23 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
             ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
 
         let screen_rect = ctx.screen_rect();
-        painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(180));
+        painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(200));
+        // Teal border glow
+        painter.rect_stroke(
+            screen_rect.shrink(4.0),
+            2,
+            egui::Stroke::new(2.0, BW_TEAL),
+            egui::StrokeKind::Outside,
+        );
 
         Area::new(Id::new("drop_text"))
             .fixed_pos(screen_rect.center())
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new("Drop .rep file here")
-                        .heading()
-                        .color(Color32::WHITE),
+                        .strong()
+                        .size(20.0)
+                        .color(BW_TEAL_BRIGHT),
                 );
             });
     }
