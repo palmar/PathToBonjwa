@@ -11,27 +11,29 @@ use crate::parser::{self, Replay};
 
 // ─── BW-inspired color palette ──────────────────────────────────────────────
 /// Deep space black — main background
-const BW_BG: egui::Color32 = egui::Color32::from_rgb(8, 12, 18);
+const BW_BG: egui::Color32 = egui::Color32::from_rgb(10, 14, 22);
 /// Slightly lighter panel background
-const BW_PANEL: egui::Color32 = egui::Color32::from_rgb(14, 20, 30);
+const BW_PANEL: egui::Color32 = egui::Color32::from_rgb(16, 24, 34);
 /// Panel/header darker stripe
-const BW_PANEL_DARK: egui::Color32 = egui::Color32::from_rgb(10, 15, 24);
+const BW_PANEL_DARK: egui::Color32 = egui::Color32::from_rgb(12, 18, 28);
+/// Menu bar background — subtle distinction from panel
+const BW_MENU_BAR: egui::Color32 = egui::Color32::from_rgb(18, 26, 38);
 /// Teal accent — primary highlight (BW console feel)
-const BW_TEAL: egui::Color32 = egui::Color32::from_rgb(0, 180, 160);
+const BW_TEAL: egui::Color32 = egui::Color32::from_rgb(0, 190, 170);
 /// Brighter teal for hover/active
-const BW_TEAL_BRIGHT: egui::Color32 = egui::Color32::from_rgb(0, 220, 200);
+const BW_TEAL_BRIGHT: egui::Color32 = egui::Color32::from_rgb(0, 230, 210);
 /// Cyan accent for interactive elements
 const BW_CYAN: egui::Color32 = egui::Color32::from_rgb(0, 200, 255);
 /// Muted border color
-const BW_BORDER: egui::Color32 = egui::Color32::from_rgb(30, 50, 60);
+const BW_BORDER: egui::Color32 = egui::Color32::from_rgb(34, 54, 66);
 /// Bright border for focused elements
-const BW_BORDER_BRIGHT: egui::Color32 = egui::Color32::from_rgb(40, 80, 90);
-/// Default text — slightly blue-tinted white
-const BW_TEXT: egui::Color32 = egui::Color32::from_rgb(180, 200, 210);
-/// Dim text for secondary info
-const BW_TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(100, 120, 130);
+const BW_BORDER_BRIGHT: egui::Color32 = egui::Color32::from_rgb(44, 86, 96);
+/// Default text — warm off-white for legibility
+const BW_TEXT: egui::Color32 = egui::Color32::from_rgb(200, 215, 220);
+/// Dim text for secondary info — brighter for readability
+const BW_TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(120, 142, 155);
 /// Header/title text
-const BW_TEXT_HEADING: egui::Color32 = egui::Color32::from_rgb(0, 210, 190);
+const BW_TEXT_HEADING: egui::Color32 = egui::Color32::from_rgb(0, 220, 200);
 
 /// Build the full egui Visuals for a Starcraft: BW retro look.
 pub fn bw_visuals() -> egui::Visuals {
@@ -131,6 +133,9 @@ pub struct App {
     log_entries: Vec<LogEntry>,
     log_start: Instant,
     log_auto_scroll: bool,
+    // UI state
+    show_settings: bool,
+    fonts_configured: bool,
 }
 
 struct CachedAnalytics {
@@ -158,6 +163,8 @@ impl Default for App {
             log_entries: Vec::new(),
             log_start: start,
             log_auto_scroll: true,
+            show_settings: false,
+            fonts_configured: false,
         };
         app.log(LogLevel::Info, "PathToBonjwa started");
         app
@@ -176,16 +183,16 @@ impl App {
 
 /// Draw a BW-styled section heading with a teal accent bar on the left.
 fn bw_section_heading(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         // Teal accent bar
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 18.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 22.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, 1.0, BW_TEAL);
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         ui.label(
             egui::RichText::new(title)
                 .strong()
-                .size(15.0)
+                .size(16.0)
                 .color(BW_TEXT_HEADING),
         );
     });
@@ -193,7 +200,7 @@ fn bw_section_heading(ui: &mut egui::Ui, title: &str) {
     let rect = ui.available_rect_before_wrap();
     let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
     ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
-    ui.add_space(4.0);
+    ui.add_space(6.0);
 }
 
 impl App {
@@ -312,13 +319,13 @@ impl App {
             ui.label(
                 egui::RichText::new("PathToBonjwa")
                     .strong()
-                    .size(28.0)
+                    .size(32.0)
                     .color(BW_TEAL_BRIGHT),
             );
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new("BROOD WAR REPLAY ANALYZER")
-                    .size(11.0)
+                    .size(12.0)
                     .color(BW_TEXT_DIM)
                     .monospace(),
             );
@@ -328,15 +335,16 @@ impl App {
             let rect = ui.available_rect_before_wrap();
             let center_x = rect.center().x;
             let line_rect = egui::Rect::from_min_size(
-                egui::pos2(center_x - 80.0, rect.min.y),
-                egui::vec2(160.0, 1.0),
+                egui::pos2(center_x - 100.0, rect.min.y),
+                egui::vec2(200.0, 1.0),
             );
             ui.painter().rect_filled(line_rect, 0.0, BW_TEAL);
             ui.add_space(8.0);
 
             ui.add_space(30.0);
             ui.label(
-                egui::RichText::new("Drop a .rep file here or click Open to load a replay")
+                egui::RichText::new("Drop a .rep file here or use File > Open Replay")
+                    .size(16.0)
                     .color(BW_TEXT),
             );
             ui.add_space(16.0);
@@ -344,7 +352,7 @@ impl App {
     }
 
     fn render_summary(&self, ui: &mut egui::Ui, replay: &Replay) {
-        ui.add_space(8.0);
+        ui.add_space(10.0);
 
         // Matchup header — styled with BW accent
         ui.horizontal(|ui| {
@@ -1141,6 +1149,41 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Configure fonts and base text size on first frame
+        if !self.fonts_configured {
+            self.fonts_configured = true;
+            let mut style = (*ctx.style()).clone();
+            // Bump all text sizes slightly for better legibility
+            style.text_styles.insert(
+                egui::TextStyle::Body,
+                egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Button,
+                egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Small,
+                egui::FontId::new(13.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Monospace,
+                egui::FontId::new(14.0, egui::FontFamily::Monospace),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(20.0, egui::FontFamily::Proportional),
+            );
+            // Slightly more padding in buttons/tabs for a larger click target
+            style.spacing.button_padding = egui::vec2(10.0, 5.0);
+            style.spacing.item_spacing = egui::vec2(8.0, 5.0);
+            ctx.set_style(style);
+        }
+
+        // Track whether file open was triggered from the menu
+        let mut open_replay = false;
+        let mut quit_app = false;
+
         // Handle dropped files
         ctx.input(|i| {
             for file in &i.raw.dropped_files {
@@ -1162,53 +1205,74 @@ impl eframe::App for App {
             self.load_replay(data);
         }
 
+        // ─── Menu bar ────────────────────────────────────────────────
+        egui::TopBottomPanel::top("menu_bar")
+            .frame(
+                egui::Frame::NONE
+                    .fill(BW_MENU_BAR)
+                    .inner_margin(egui::Margin::symmetric(6, 2)),
+            )
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button(
+                        egui::RichText::new("File").size(14.0).color(BW_TEXT),
+                        |ui| {
+                            if ui
+                                .button(egui::RichText::new("Open Replay...").size(14.0))
+                                .clicked()
+                            {
+                                open_replay = true;
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui
+                                .button(egui::RichText::new("Settings").size(14.0))
+                                .clicked()
+                            {
+                                self.show_settings = !self.show_settings;
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui
+                                .button(egui::RichText::new("Quit").size(14.0))
+                                .clicked()
+                            {
+                                quit_app = true;
+                                ui.close_menu();
+                            }
+                        },
+                    );
+                });
+            });
+
+        // ─── Header + tab bar ────────────────────────────────────────
         egui::TopBottomPanel::top("top_panel")
             .frame(
                 egui::Frame::NONE
                     .fill(BW_PANEL)
-                    .inner_margin(egui::Margin::symmetric(8, 6)),
+                    .inner_margin(egui::Margin::symmetric(10, 8)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("PathToBonjwa")
                             .strong()
-                            .size(16.0)
+                            .size(18.0)
                             .color(BW_TEAL),
                     );
                     ui.label(
                         egui::RichText::new("BW Replay Analyzer")
-                            .size(10.0)
+                            .size(12.0)
                             .color(BW_TEXT_DIM),
                     );
-                    ui.add_space(8.0);
-                    if ui.button("Open Replay").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("BW Replay", &["rep"])
-                            .pick_file()
-                        {
-                            self.log(LogLevel::Info, format!("Opening file: {}", path.display()));
-                            match std::fs::read(&path) {
-                                Ok(data) => self.load_replay(data),
-                                Err(e) => {
-                                    let msg = format!("Failed to read file: {}", e);
-                                    self.log(LogLevel::Error, &msg);
-                                    self.error = Some(msg);
-                                    self.replay = None;
-                                    self.cached = None;
-                                }
-                            }
-                        }
-                    }
                 });
 
-                // ─── Tab bar ─────────────────────────────────────────────
-                ui.add_space(2.0);
-                // Draw a thin teal line above the tabs
+                // ─── Tab bar ─────────────────────────────────────────
+                ui.add_space(4.0);
                 let rect = ui.available_rect_before_wrap();
                 let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
                 ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
-                ui.add_space(4.0);
+                ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
                     let tabs: &[(Tab, &str, bool)] = &[
@@ -1228,9 +1292,9 @@ impl eframe::App for App {
                             egui::RichText::new(label)
                                 .strong()
                                 .color(BW_TEAL_BRIGHT)
-                                .size(13.0)
+                                .size(15.0)
                         } else {
-                            egui::RichText::new(label).color(BW_TEXT_DIM).size(13.0)
+                            egui::RichText::new(label).color(BW_TEXT_DIM).size(15.0)
                         };
 
                         let resp = ui.selectable_label(is_active, text);
@@ -1240,7 +1304,7 @@ impl eframe::App for App {
                             let tab_rect = resp.rect;
                             let indicator = egui::Rect::from_min_size(
                                 egui::pos2(tab_rect.min.x, tab_rect.max.y - 2.0),
-                                egui::vec2(tab_rect.width(), 2.0),
+                                egui::vec2(tab_rect.width(), 2.5),
                             );
                             ui.painter().rect_filled(indicator, 0.0, BW_TEAL);
                         }
@@ -1251,6 +1315,51 @@ impl eframe::App for App {
                     }
                 });
             });
+
+        // Handle menu actions (after panel is done)
+        if open_replay {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("BW Replay", &["rep"])
+                .pick_file()
+            {
+                self.log(LogLevel::Info, format!("Opening file: {}", path.display()));
+                match std::fs::read(&path) {
+                    Ok(data) => self.load_replay(data),
+                    Err(e) => {
+                        let msg = format!("Failed to read file: {}", e);
+                        self.log(LogLevel::Error, &msg);
+                        self.error = Some(msg);
+                        self.replay = None;
+                        self.cached = None;
+                    }
+                }
+            }
+        }
+
+        if quit_app {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
+        // ─── Settings window ─────────────────────────────────────────
+        if self.show_settings {
+            egui::Window::new("Settings")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new("PathToBonjwa v0.5.0")
+                            .size(16.0)
+                            .color(BW_TEAL),
+                    );
+                    ui.add_space(8.0);
+                    ui.label("Settings will be available in a future update.");
+                    ui.add_space(12.0);
+                    if ui.button("Close").clicked() {
+                        self.show_settings = false;
+                    }
+                });
+        }
 
         egui::CentralPanel::default()
             .frame(
