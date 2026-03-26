@@ -10,7 +10,8 @@ fn check_eapm(path: &str) {
 
     let mut any_real_player = false;
     for p in &replay.players {
-        let apm = pathtobonjwa::analytics::compute_apm(&replay.commands, p.player_id, replay.frames);
+        let apm =
+            pathtobonjwa::analytics::compute_apm(&replay.commands, p.player_id, replay.frames);
         let ratio = if apm.avg_apm > 0.0 {
             apm.avg_eapm / apm.avg_apm * 100.0
         } else {
@@ -44,7 +45,10 @@ fn check_eapm(path: &str) {
         );
     }
     if !any_real_player {
-        eprintln!("  (no players with >10 APM in {} — skipping assertions)", path);
+        eprintln!(
+            "  (no players with >10 APM in {} — skipping assertions)",
+            path
+        );
     }
 }
 

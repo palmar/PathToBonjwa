@@ -83,12 +83,8 @@ fn is_ineffective(cmd: &Command, prev: Option<&Command>) -> bool {
     // the same approximate location (within 4-tile radius).
     if delta <= 12 {
         if let (
-            CmdType::RightClick {
-                x: x1, y: y1, ..
-            },
-            CmdType::RightClick {
-                x: x2, y: y2, ..
-            },
+            CmdType::RightClick { x: x1, y: y1, .. },
+            CmdType::RightClick { x: x2, y: y2, .. },
         ) = (&cmd.cmd, &prev.cmd)
         {
             let dx = (*x1 as i32 - *x2 as i32).abs();

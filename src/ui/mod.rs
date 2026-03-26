@@ -596,7 +596,6 @@ impl App {
                     plot_ui.line(line);
                 }
             });
-
     }
 
     fn render_analytics(&self, ui: &mut egui::Ui, replay: &Replay) {
@@ -872,10 +871,7 @@ impl eframe::App for App {
                                 ui.close_menu();
                             }
                             ui.separator();
-                            if ui
-                                .button(egui::RichText::new("Quit").size(14.0))
-                                .clicked()
-                            {
+                            if ui.button(egui::RichText::new("Quit").size(14.0)).clicked() {
                                 quit_app = true;
                                 ui.close_menu();
                             }
@@ -987,7 +983,7 @@ impl eframe::App for App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label(
-                        egui::RichText::new("PathToBonjwa v0.7.0")
+                        egui::RichText::new("PathToBonjwa v1.0.0")
                             .size(16.0)
                             .color(BW_TEAL),
                     );
