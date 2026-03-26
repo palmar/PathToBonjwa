@@ -254,9 +254,6 @@ pub struct BuildOrderEntry {
     pub time_str: String,
     pub unit_name: String,
     pub unit_id: u16,
-    /// Current supply used / supply max at time of this entry
-    pub supply_used: f64,
-    pub supply_max: f64,
 }
 
 /// Dedup window: commands for the same unit within this many frames are collapsed.
@@ -266,15 +263,11 @@ const BUILD_ORDER_DEDUP_FRAMES: u32 = 24;
 pub fn extract_build_order(
     commands: &[Command],
     player_id: u8,
-    race: &Race,
+    _race: &Race,
 ) -> Vec<BuildOrderEntry> {
     let mut entries = Vec::new();
     // Track last frame we accepted each unit_id to deduplicate spam
     let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
-
-    // Track running supply (mirrors compute_supply_curve logic)
-    let (starting_used, mut supply_max) = costs::starting_supply(race);
-    let mut supply_used = starting_used;
 
     for cmd in commands {
         if cmd.player_id != player_id {
@@ -303,34 +296,6 @@ pub fn extract_build_order(
             }
             last_frame_for_unit.insert(uid, cmd.frame);
 
-            // Update supply tracking for ALL units (including workers)
-            if let Some(cost) = costs::unit_cost(uid) {
-                let supply = if costs::is_pair_unit(uid) {
-                    cost.supply * 2.0
-                } else {
-                    cost.supply
-                };
-
-                if supply < 0.0 {
-                    supply_max = (supply_max - supply).min(200.0);
-                } else {
-                    supply_used += supply;
-                }
-
-                // Zerg drone consumed for building
-                if matches!(race, Race::Zerg)
-                    && matches!(&cmd.cmd, CmdType::Build { .. })
-                    && costs::is_zerg_drone_building(uid)
-                {
-                    supply_used = (supply_used - 1.0).max(0.0);
-                }
-
-                // Clamp
-                if supply_used > supply_max {
-                    supply_used = supply_max;
-                }
-            }
-
             // Filter out worker production from the build order display
             if costs::is_worker(uid) {
                 continue;
@@ -344,75 +309,11 @@ pub fn extract_build_order(
                 time_str: format!("{}:{:02}", mins, s),
                 unit_name: name.to_string(),
                 unit_id: uid,
-                supply_used,
-                supply_max,
             });
         }
     }
 
     entries
-}
-
-// ─── Unit production counts ──────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct UnitCount {
-    pub unit_name: String,
-    pub unit_id: u16,
-    pub count: u32,
-    pub is_building: bool,
-}
-
-pub fn compute_unit_counts(commands: &[Command], player_id: u8) -> Vec<UnitCount> {
-    let mut counts: HashMap<u16, u32> = HashMap::new();
-    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
-
-    for cmd in commands {
-        if cmd.player_id != player_id {
-            continue;
-        }
-
-        let unit_id = match &cmd.cmd {
-            CmdType::Build { unit_id, .. } => Some(*unit_id),
-            CmdType::Train { unit_id } => Some(*unit_id),
-            CmdType::UnitMorph { unit_id } => Some(*unit_id),
-            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
-            _ => None,
-        };
-
-        if let Some(uid) = unit_id {
-            if unit_name(uid) != "Unknown" {
-                // Dedup: skip commands for the same unit within the spam window
-                if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
-                    if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
-                        continue;
-                    }
-                }
-                last_frame_for_unit.insert(uid, cmd.frame);
-                *counts.entry(uid).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let mut result: Vec<UnitCount> = counts
-        .into_iter()
-        .map(|(uid, count)| UnitCount {
-            unit_name: unit_name(uid).to_string(),
-            unit_id: uid,
-            count,
-            is_building: is_building(uid),
-        })
-        .collect();
-
-    // Sort: buildings first, then units, each by count descending
-    result.sort_by(|a, b| {
-        b.is_building
-            .cmp(&a.is_building)
-            .then(b.count.cmp(&a.count))
-    });
-
-    result
 }
 
 // ─── Hotkey stats ────────────────────────────────────────────────────────────
@@ -457,376 +358,6 @@ pub fn compute_hotkey_stats(commands: &[Command], player_id: u8) -> HotkeyStats 
     }
 
     stats
-}
-
-// ─── Supply curve ───────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct SupplyCurve {
-    /// (time_seconds, worker_supply, army_supply, supply_max) at each production event
-    pub points: Vec<(f64, f64, f64, f64)>,
-}
-
-pub fn compute_supply_curve(
-    commands: &[Command],
-    player_id: u8,
-    race: &Race,
-    total_frames: u32,
-) -> SupplyCurve {
-    let (starting_used, mut max) = costs::starting_supply(race);
-    // Starting units are all workers (4 SCVs/Drones/Probes)
-    let mut worker_supply = starting_used;
-    let mut army_supply = 0.0;
-    let mut points = vec![(0.0, worker_supply, army_supply, max)];
-
-    // Dedup: track last accepted frame per unit_id to filter spam clicks
-    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
-
-    for cmd in commands {
-        if cmd.player_id != player_id {
-            continue;
-        }
-
-        let unit_id = match &cmd.cmd {
-            CmdType::Build { unit_id, .. } => Some(*unit_id),
-            CmdType::Train { unit_id } => Some(*unit_id),
-            CmdType::UnitMorph { unit_id } => Some(*unit_id),
-            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
-            _ => None,
-        };
-
-        if let Some(uid) = unit_id {
-            if let Some(cost) = costs::unit_cost(uid) {
-                // Dedup: skip if same unit type within dedup window (~1 second)
-                if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
-                    if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
-                        continue;
-                    }
-                }
-                last_frame_for_unit.insert(uid, cmd.frame);
-
-                let time = cmd.frame as f64 / FRAMES_PER_SECOND;
-
-                // Pair units (Zergling, Scourge): one Train produces two units
-                let supply = if costs::is_pair_unit(uid) {
-                    cost.supply * 2.0
-                } else {
-                    cost.supply
-                };
-
-                if supply < 0.0 {
-                    // Supply provider — cap at 200 (BW hard limit)
-                    max = (max - supply).min(200.0);
-                } else if costs::is_worker(uid) {
-                    worker_supply += supply;
-                } else {
-                    army_supply += supply;
-                }
-
-                // Zerg Build command: drone is consumed to become the building
-                if matches!(race, Race::Zerg)
-                    && matches!(&cmd.cmd, CmdType::Build { .. })
-                    && costs::is_zerg_drone_building(uid)
-                {
-                    worker_supply = (worker_supply - 1.0).max(0.0);
-                }
-
-                // Clamp supply used to supply max (can't use more than available)
-                let total_used = worker_supply + army_supply;
-                if total_used > max {
-                    let excess = total_used - max;
-                    // Reduce army first (combat losses are more common than worker losses)
-                    if army_supply >= excess {
-                        army_supply -= excess;
-                    } else {
-                        let remainder = excess - army_supply;
-                        army_supply = 0.0;
-                        worker_supply = (worker_supply - remainder).max(0.0);
-                    }
-                }
-
-                points.push((time, worker_supply, army_supply, max));
-            }
-        }
-    }
-
-    // Add final point at game end
-    let end_time = total_frames as f64 / FRAMES_PER_SECOND;
-    points.push((end_time, worker_supply, army_supply, max));
-
-    SupplyCurve { points }
-}
-
-// ─── Production timeline ────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ProductionEvent {
-    pub frame: u32,
-    pub time_secs: f64,
-    pub time_str: String,
-    pub unit_name: String,
-    pub unit_id: u16,
-    pub is_building: bool,
-}
-
-/// Returns a timeline of all production events sorted by time.
-/// Unlike build order, this includes unit cost info for resource tracking.
-#[allow(dead_code)]
-pub fn compute_production_timeline(commands: &[Command], player_id: u8) -> Vec<ProductionEvent> {
-    let mut events = Vec::new();
-
-    for cmd in commands {
-        if cmd.player_id != player_id {
-            continue;
-        }
-
-        let unit_id = match &cmd.cmd {
-            CmdType::Build { unit_id, .. } => Some(*unit_id),
-            CmdType::Train { unit_id } => Some(*unit_id),
-            CmdType::UnitMorph { unit_id } => Some(*unit_id),
-            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
-            _ => None,
-        };
-
-        if let Some(uid) = unit_id {
-            let name = unit_name(uid);
-            if name == "Unknown" {
-                continue;
-            }
-            let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
-            let mins = (secs / 60.0) as u32;
-            let s = (secs % 60.0) as u32;
-            events.push(ProductionEvent {
-                frame: cmd.frame,
-                time_secs: secs,
-                time_str: format!("{}:{:02}", mins, s),
-                unit_name: name.to_string(),
-                unit_id: uid,
-                is_building: is_building(uid),
-            });
-        }
-    }
-
-    events
-}
-
-/// For Gantt-style: returns (unit_name, first_frame, last_frame) — when each unit
-/// type was first and last produced.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct UnitProductionSpan {
-    pub unit_name: String,
-    pub unit_id: u16,
-    pub is_building: bool,
-    pub first_time_secs: f64,
-    pub last_time_secs: f64,
-    pub count: u32,
-}
-
-pub fn compute_production_spans(commands: &[Command], player_id: u8) -> Vec<UnitProductionSpan> {
-    let mut spans: HashMap<u16, (String, bool, f64, f64, u32)> = HashMap::new();
-    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
-
-    for cmd in commands {
-        if cmd.player_id != player_id {
-            continue;
-        }
-
-        let unit_id = match &cmd.cmd {
-            CmdType::Build { unit_id, .. } => Some(*unit_id),
-            CmdType::Train { unit_id } => Some(*unit_id),
-            CmdType::UnitMorph { unit_id } => Some(*unit_id),
-            CmdType::BuildingMorph { unit_id } => Some(*unit_id),
-            _ => None,
-        };
-
-        if let Some(uid) = unit_id {
-            let name = unit_name(uid);
-            if name == "Unknown" {
-                continue;
-            }
-
-            // Dedup: skip commands for the same unit within the spam window
-            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
-                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
-                    continue;
-                }
-            }
-            last_frame_for_unit.insert(uid, cmd.frame);
-
-            let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
-            let entry =
-                spans
-                    .entry(uid)
-                    .or_insert((name.to_string(), is_building(uid), secs, secs, 0));
-            entry.3 = secs; // update last time
-            entry.4 += 1;
-        }
-    }
-
-    let mut result: Vec<UnitProductionSpan> = spans
-        .into_iter()
-        .map(
-            |(uid, (name, bld, first, last, count))| UnitProductionSpan {
-                unit_name: name,
-                unit_id: uid,
-                is_building: bld,
-                first_time_secs: first,
-                last_time_secs: last,
-                count,
-            },
-        )
-        .collect();
-
-    result.sort_by(|a, b| a.first_time_secs.partial_cmp(&b.first_time_secs).unwrap());
-    result
-}
-
-// ─── Resource estimation ────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct ResourceEstimate {
-    /// (time_seconds, cumulative_minerals, cumulative_gas) at each spend event
-    pub spending_curve: Vec<(f64, u32, u32)>,
-    pub total_minerals: u32,
-    pub total_gas: u32,
-}
-
-pub fn compute_resource_estimate(commands: &[Command], player_id: u8) -> ResourceEstimate {
-    let mut total_minerals: u32 = 0;
-    let mut total_gas: u32 = 0;
-    let mut curve = vec![(0.0, 0u32, 0u32)];
-    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
-
-    for cmd in commands {
-        if cmd.player_id != player_id {
-            continue;
-        }
-
-        let unit_id_opt = match &cmd.cmd {
-            CmdType::Build { unit_id, .. }
-            | CmdType::Train { unit_id }
-            | CmdType::UnitMorph { unit_id }
-            | CmdType::BuildingMorph { unit_id } => Some(*unit_id),
-            _ => None,
-        };
-
-        let (minerals, gas) = if let Some(uid) = unit_id_opt {
-            // Dedup: skip spam commands for the same unit
-            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
-                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
-                    continue;
-                }
-            }
-            last_frame_for_unit.insert(uid, cmd.frame);
-            if let Some(cost) = costs::unit_cost(uid) {
-                (cost.minerals, cost.gas)
-            } else {
-                continue;
-            }
-        } else {
-            match &cmd.cmd {
-                CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
-                CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
-                _ => continue,
-            }
-        };
-
-        if minerals == 0 && gas == 0 {
-            continue;
-        }
-
-        total_minerals += minerals;
-        total_gas += gas;
-        let time = cmd.frame as f64 / FRAMES_PER_SECOND;
-        curve.push((time, total_minerals, total_gas));
-    }
-
-    ResourceEstimate {
-        spending_curve: curve,
-        total_minerals,
-        total_gas,
-    }
-}
-
-// ─── Resource income (spending rate per minute) ─────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct ResourceIncomeData {
-    /// (minute_midpoint_seconds, minerals_per_minute, gas_per_minute)
-    pub points: Vec<(f64, f64, f64)>,
-}
-
-/// Computes resource spending rate per minute as a proxy for income.
-/// Uses per-minute buckets derived from the spending curve.
-pub fn compute_resource_income(
-    commands: &[Command],
-    player_id: u8,
-    total_frames: u32,
-) -> ResourceIncomeData {
-    let total_secs = total_frames as f64 / FRAMES_PER_SECOND;
-    let total_minutes = (total_secs / 60.0).ceil() as usize;
-    if total_minutes == 0 {
-        return ResourceIncomeData { points: vec![] };
-    }
-
-    let mut min_buckets = vec![0.0f64; total_minutes];
-    let mut gas_buckets = vec![0.0f64; total_minutes];
-    let mut last_frame_for_unit: HashMap<u16, u32> = HashMap::new();
-
-    for cmd in commands {
-        if cmd.player_id != player_id {
-            continue;
-        }
-
-        let unit_id_opt = match &cmd.cmd {
-            CmdType::Build { unit_id, .. }
-            | CmdType::Train { unit_id }
-            | CmdType::UnitMorph { unit_id }
-            | CmdType::BuildingMorph { unit_id } => Some(*unit_id),
-            _ => None,
-        };
-
-        let (minerals, gas) = if let Some(uid) = unit_id_opt {
-            // Dedup: skip spam commands for the same unit
-            if let Some(&last_frame) = last_frame_for_unit.get(&uid) {
-                if cmd.frame.saturating_sub(last_frame) < BUILD_ORDER_DEDUP_FRAMES {
-                    continue;
-                }
-            }
-            last_frame_for_unit.insert(uid, cmd.frame);
-            if let Some(cost) = costs::unit_cost(uid) {
-                (cost.minerals, cost.gas)
-            } else {
-                continue;
-            }
-        } else {
-            match &cmd.cmd {
-                CmdType::Upgrade { upgrade_id } => costs::upgrade_cost(*upgrade_id),
-                CmdType::Tech { tech_id } => costs::tech_cost(*tech_id),
-                _ => continue,
-            }
-        };
-
-        if minerals == 0 && gas == 0 {
-            continue;
-        }
-
-        let secs = cmd.frame as f64 / FRAMES_PER_SECOND;
-        let bucket = ((secs / 60.0) as usize).min(total_minutes - 1);
-        min_buckets[bucket] += minerals as f64;
-        gas_buckets[bucket] += gas as f64;
-    }
-
-    let points = (0..total_minutes)
-        .map(|i| {
-            let midpoint = (i as f64 + 0.5) * 60.0;
-            (midpoint, min_buckets[i], gas_buckets[i])
-        })
-        .collect();
-
-    ResourceIncomeData { points }
 }
 
 // ─── Idle time / macro gap analysis ─────────────────────────────────────────
@@ -925,8 +456,6 @@ pub fn export_csv(
     replay: &Replay,
     apm_data: &[(u8, String, ApmData)],
     build_orders: &[(u8, String, Vec<BuildOrderEntry>)],
-    unit_counts: &[(u8, String, Vec<UnitCount>)],
-    resource_estimates: &[(u8, String, ResourceEstimate)],
     idle_analyses: &[(u8, String, IdleAnalysis)],
 ) -> String {
     let mut csv = String::new();
@@ -957,19 +486,6 @@ pub fn export_csv(
     }
     csv.push('\n');
 
-    // Resource estimates
-    csv.push_str("# Resource Estimates\n");
-    csv.push_str("Player,Total Minerals,Total Gas\n");
-    for (_, name, res) in resource_estimates {
-        csv.push_str(&format!(
-            "{},{},{}\n",
-            escape_csv(name),
-            res.total_minerals,
-            res.total_gas,
-        ));
-    }
-    csv.push('\n');
-
     // Idle analysis
     csv.push_str("# Idle Analysis\n");
     csv.push_str("Player,Gap Count,Total Idle (s),Longest Gap (s)\n");
@@ -993,21 +509,6 @@ pub fn export_csv(
                 "{},{}\n",
                 entry.time_str,
                 escape_csv(&entry.unit_name),
-            ));
-        }
-        csv.push('\n');
-    }
-
-    // Unit counts per player
-    for (_, name, counts) in unit_counts {
-        csv.push_str(&format!("# Unit Production — {}\n", name));
-        csv.push_str("Unit,Count,Type\n");
-        for uc in counts {
-            csv.push_str(&format!(
-                "{},{},{}\n",
-                escape_csv(&uc.unit_name),
-                uc.count,
-                if uc.is_building { "Building" } else { "Unit" },
             ));
         }
         csv.push('\n');

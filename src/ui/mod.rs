@@ -3,10 +3,7 @@ use std::time::Instant;
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
-use crate::analytics::{
-    self, ApmData, BuildOrderEntry, HotkeyStats, IdleAnalysis, ResourceEstimate,
-    ResourceIncomeData, SupplyCurve, UnitCount, UnitProductionSpan,
-};
+use crate::analytics::{self, ApmData, BuildOrderEntry, HotkeyStats, IdleAnalysis};
 use crate::parser::{self, Replay};
 
 // ─── BW-inspired color palette ──────────────────────────────────────────────
@@ -141,13 +138,7 @@ pub struct App {
 struct CachedAnalytics {
     apm_data: Vec<(u8, String, ApmData)>,
     build_orders: Vec<(u8, String, Vec<BuildOrderEntry>)>,
-    unit_counts: Vec<(u8, String, Vec<UnitCount>)>,
     hotkey_stats: Vec<(u8, String, HotkeyStats)>,
-    // Phase 3
-    supply_curves: Vec<(u8, String, SupplyCurve)>,
-    production_spans: Vec<(u8, String, Vec<UnitProductionSpan>)>,
-    resource_estimates: Vec<(u8, String, ResourceEstimate)>,
-    resource_income_data: Vec<(u8, String, ResourceIncomeData)>,
     idle_analyses: Vec<(u8, String, IdleAnalysis)>,
 }
 
@@ -239,12 +230,7 @@ impl App {
     fn compute_analytics(replay: &Replay) -> CachedAnalytics {
         let mut apm_data = Vec::new();
         let mut build_orders = Vec::new();
-        let mut unit_counts = Vec::new();
         let mut hotkey_stats = Vec::new();
-        let mut supply_curves = Vec::new();
-        let mut production_spans = Vec::new();
-        let mut resource_estimates = Vec::new();
-        let mut resource_income_data = Vec::new();
         let mut idle_analyses = Vec::new();
 
         for player in &replay.players {
@@ -261,35 +247,10 @@ impl App {
                 name.clone(),
                 analytics::extract_build_order(&replay.commands, pid, &player.race),
             ));
-            unit_counts.push((
-                pid,
-                name.clone(),
-                analytics::compute_unit_counts(&replay.commands, pid),
-            ));
             hotkey_stats.push((
                 pid,
                 name.clone(),
                 analytics::compute_hotkey_stats(&replay.commands, pid),
-            ));
-            supply_curves.push((
-                pid,
-                name.clone(),
-                analytics::compute_supply_curve(&replay.commands, pid, &player.race, replay.frames),
-            ));
-            production_spans.push((
-                pid,
-                name.clone(),
-                analytics::compute_production_spans(&replay.commands, pid),
-            ));
-            resource_estimates.push((
-                pid,
-                name.clone(),
-                analytics::compute_resource_estimate(&replay.commands, pid),
-            ));
-            resource_income_data.push((
-                pid,
-                name.clone(),
-                analytics::compute_resource_income(&replay.commands, pid, replay.frames),
             ));
             idle_analyses.push((
                 pid,
@@ -301,12 +262,7 @@ impl App {
         CachedAnalytics {
             apm_data,
             build_orders,
-            unit_counts,
             hotkey_stats,
-            supply_curves,
-            production_spans,
-            resource_estimates,
-            resource_income_data,
             idle_analyses,
         }
     }
@@ -493,12 +449,11 @@ impl App {
             .default_open(true)
             .show(ui, |ui| {
                 egui::Grid::new(format!("bo_{}", pid))
-                    .num_columns(3)
+                    .num_columns(2)
                     .spacing([16.0, 3.0])
                     .striped(true)
                     .show(ui, |ui| {
                         ui.label(egui::RichText::new("Time").strong());
-                        ui.label(egui::RichText::new("Supply").strong());
                         ui.label(egui::RichText::new("Unit / Building").strong());
                         ui.end_row();
 
@@ -507,15 +462,6 @@ impl App {
                                 egui::RichText::new(&entry.time_str)
                                     .color(egui::Color32::GRAY)
                                     .monospace(),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{}/{}",
-                                    entry.supply_used as u32,
-                                    entry.supply_max as u32
-                                ))
-                                .color(BW_TEXT_DIM)
-                                .monospace(),
                             );
                             let style = if parser::is_building(entry.unit_id) {
                                 egui::RichText::new(&entry.unit_name)
@@ -528,7 +474,6 @@ impl App {
                         }
                         if entries.len() > 50 {
                             ui.label("");
-                            ui.label("");
                             ui.label(
                                 egui::RichText::new(format!("... and {} more", entries.len() - 50))
                                     .color(egui::Color32::GRAY),
@@ -537,66 +482,6 @@ impl App {
                         }
                     });
             });
-            ui.add_space(8.0);
-        }
-
-        // ─── Unit production counts ──────────────────────────────────────
-        ui.add_space(8.0);
-        bw_section_heading(ui, "Unit Production");
-
-        for (pid, name, counts) in &cached.unit_counts {
-            let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player
-                .map(|p| p.color.to_egui())
-                .unwrap_or(egui::Color32::WHITE);
-
-            egui::CollapsingHeader::new(egui::RichText::new(name).color(color).strong())
-                .default_open(true)
-                .show(ui, |ui| {
-                    let buildings: Vec<&UnitCount> =
-                        counts.iter().filter(|c| c.is_building).collect();
-                    let units: Vec<&UnitCount> = counts.iter().filter(|c| !c.is_building).collect();
-
-                    if !buildings.is_empty() {
-                        ui.label(
-                            egui::RichText::new("Buildings")
-                                .small()
-                                .color(egui::Color32::GRAY),
-                        );
-                        egui::Grid::new(format!("bldg_{}", pid))
-                            .num_columns(2)
-                            .spacing([20.0, 2.0])
-                            .show(ui, |ui| {
-                                for b in &buildings {
-                                    ui.label(
-                                        egui::RichText::new(&b.unit_name)
-                                            .color(egui::Color32::LIGHT_BLUE),
-                                    );
-                                    ui.label(format!("x{}", b.count));
-                                    ui.end_row();
-                                }
-                            });
-                        ui.add_space(4.0);
-                    }
-
-                    if !units.is_empty() {
-                        ui.label(
-                            egui::RichText::new("Units")
-                                .small()
-                                .color(egui::Color32::GRAY),
-                        );
-                        egui::Grid::new(format!("units_{}", pid))
-                            .num_columns(2)
-                            .spacing([20.0, 2.0])
-                            .show(ui, |ui| {
-                                for u in &units {
-                                    ui.label(&u.unit_name);
-                                    ui.label(format!("x{}", u.count));
-                                    ui.end_row();
-                                }
-                            });
-                    }
-                });
             ui.add_space(8.0);
         }
 
@@ -712,195 +597,6 @@ impl App {
                 }
             });
 
-        // ─── Supply flow chart (stacked worker/army) ─────────────────────
-        ui.add_space(16.0);
-        bw_section_heading(ui, "Supply Over Time (Worker / Army)");
-
-        Plot::new("supply_chart")
-            .height(plot_height)
-            .allow_scroll(false)
-            .x_axis_label("Seconds")
-            .y_axis_label("Supply")
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                for (pid, name, curve) in &cached.supply_curves {
-                    let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
-
-                    // Stacked area: total (worker + army) filled from 0 with army shade
-                    let total_points: PlotPoints = curve
-                        .points
-                        .iter()
-                        .map(|&(t, w, a, _)| [t, w + a])
-                        .collect();
-                    let army_color =
-                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
-                    plot_ui.line(
-                        Line::new(total_points)
-                            .name(format!("{} Army", name))
-                            .color(army_color)
-                            .fill(0.0)
-                            .width(1.5),
-                    );
-
-                    // Worker area filled from 0 (covers bottom portion)
-                    let worker_points: PlotPoints = curve
-                        .points
-                        .iter()
-                        .map(|&(t, w, _, _)| [t, w])
-                        .collect();
-                    let worker_color =
-                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 100);
-                    plot_ui.line(
-                        Line::new(worker_points)
-                            .name(format!("{} Workers", name))
-                            .color(worker_color)
-                            .fill(0.0)
-                            .width(1.5),
-                    );
-
-                    // Supply max line (transparent outline)
-                    let max_points: PlotPoints = curve
-                        .points
-                        .iter()
-                        .map(|&(t, _, _, max)| [t, max])
-                        .collect();
-                    let max_color =
-                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
-                    plot_ui.line(
-                        Line::new(max_points)
-                            .name(format!("{} Max", name))
-                            .color(max_color)
-                            .width(1.5),
-                    );
-                }
-            });
-
-        // ─── Mineral spending chart ─────────────────────────────────────
-        ui.add_space(16.0);
-        bw_section_heading(ui, "Cumulative Mineral Spending");
-
-        Plot::new("mineral_spending_chart")
-            .height(plot_height)
-            .allow_scroll(false)
-            .x_axis_label("Seconds")
-            .y_axis_label("Minerals Spent")
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                for (pid, name, res) in &cached.resource_estimates {
-                    let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
-
-                    let min_points: PlotPoints = res
-                        .spending_curve
-                        .iter()
-                        .map(|&(t, m, _)| [t, m as f64])
-                        .collect();
-                    plot_ui.line(
-                        Line::new(min_points)
-                            .name(format!("{}", name))
-                            .color(color)
-                            .width(2.0),
-                    );
-                }
-            });
-
-        // ─── Gas spending chart ──────────────────────────────────────────
-        ui.add_space(16.0);
-        bw_section_heading(ui, "Cumulative Gas Spending");
-
-        Plot::new("gas_spending_chart")
-            .height(plot_height)
-            .allow_scroll(false)
-            .x_axis_label("Seconds")
-            .y_axis_label("Gas Spent")
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                for (pid, name, res) in &cached.resource_estimates {
-                    let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
-
-                    let gas_points: PlotPoints = res
-                        .spending_curve
-                        .iter()
-                        .map(|&(t, _, g)| [t, g as f64])
-                        .collect();
-                    plot_ui.line(
-                        Line::new(gas_points)
-                            .name(format!("{}", name))
-                            .color(color)
-                            .width(2.0),
-                    );
-                }
-            });
-
-        // ─── Mineral income chart ────────────────────────────────────────
-        ui.add_space(16.0);
-        bw_section_heading(ui, "Mineral Income (per Minute)");
-
-        Plot::new("mineral_income_chart")
-            .height(plot_height)
-            .allow_scroll(false)
-            .x_axis_label("Seconds")
-            .y_axis_label("Minerals / Minute")
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                for (pid, name, income) in &cached.resource_income_data {
-                    let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
-
-                    let min_points: PlotPoints = income
-                        .points
-                        .iter()
-                        .map(|&(t, m, _)| [t, m])
-                        .collect();
-                    plot_ui.line(
-                        Line::new(min_points)
-                            .name(format!("{}", name))
-                            .color(color)
-                            .width(2.0),
-                    );
-                }
-            });
-
-        // ─── Gas income chart ────────────────────────────────────────────
-        ui.add_space(16.0);
-        bw_section_heading(ui, "Gas Income (per Minute)");
-
-        Plot::new("gas_income_chart")
-            .height(plot_height)
-            .allow_scroll(false)
-            .x_axis_label("Seconds")
-            .y_axis_label("Gas / Minute")
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                for (pid, name, income) in &cached.resource_income_data {
-                    let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
-
-                    let gas_points: PlotPoints = income
-                        .points
-                        .iter()
-                        .map(|&(t, _, g)| [t, g])
-                        .collect();
-                    plot_ui.line(
-                        Line::new(gas_points)
-                            .name(format!("{}", name))
-                            .color(color)
-                            .width(2.0),
-                    );
-                }
-            });
     }
 
     fn render_analytics(&self, ui: &mut egui::Ui, replay: &Replay) {
@@ -910,104 +606,6 @@ impl App {
         };
 
         ui.add_space(8.0);
-
-        // ─── Resource estimates ──────────────────────────────────────────
-        bw_section_heading(ui, "Resource Estimates");
-
-        egui::Grid::new("resource_summary")
-            .num_columns(3)
-            .spacing([20.0, 6.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("Player").strong());
-                ui.label(egui::RichText::new("Minerals Spent").strong());
-                ui.label(egui::RichText::new("Gas Spent").strong());
-                ui.end_row();
-
-                for (pid, name, res) in &cached.resource_estimates {
-                    let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
-                    ui.label(egui::RichText::new(name).color(color).strong());
-                    ui.label(
-                        egui::RichText::new(format!("{}", res.total_minerals))
-                            .color(egui::Color32::from_rgb(0, 180, 255)),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("{}", res.total_gas))
-                            .color(egui::Color32::from_rgb(0, 200, 80)),
-                    );
-                    ui.end_row();
-                }
-            });
-
-        // ─── Production timeline (Gantt-style) ──────────────────────────
-        ui.add_space(16.0);
-        bw_section_heading(ui, "Production Timeline");
-
-        let game_duration = replay.duration_secs;
-
-        for (pid, name, spans) in &cached.production_spans {
-            let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player
-                .map(|p| p.color.to_egui())
-                .unwrap_or(egui::Color32::WHITE);
-
-            egui::CollapsingHeader::new(
-                egui::RichText::new(format!("{} ({} unit types)", name, spans.len()))
-                    .color(color)
-                    .strong(),
-            )
-            .default_open(true)
-            .show(ui, |ui| {
-                let available_width = ui.available_width().max(200.0);
-                let label_width = 120.0;
-                let bar_width = available_width - label_width - 80.0;
-
-                for span in spans {
-                    ui.horizontal(|ui| {
-                        let label_style = if span.is_building {
-                            egui::RichText::new(&span.unit_name)
-                                .color(egui::Color32::LIGHT_BLUE)
-                                .small()
-                        } else {
-                            egui::RichText::new(&span.unit_name).small()
-                        };
-                        ui.allocate_ui([label_width, 16.0].into(), |ui| {
-                            ui.label(label_style);
-                        });
-
-                        // Draw the Gantt bar
-                        let start_frac = span.first_time_secs / game_duration;
-                        let end_frac = span.last_time_secs / game_duration;
-                        let bar_start = start_frac as f32 * bar_width;
-                        let bar_end = (end_frac as f32 * bar_width).max(bar_start + 4.0);
-
-                        let (rect, _) =
-                            ui.allocate_exact_size([bar_width, 12.0].into(), egui::Sense::hover());
-
-                        let painter = ui.painter();
-                        // Background track
-                        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(40));
-                        // Active bar
-                        let bar_rect = egui::Rect::from_min_max(
-                            egui::pos2(rect.min.x + bar_start, rect.min.y),
-                            egui::pos2(rect.min.x + bar_end, rect.max.y),
-                        );
-                        painter.rect_filled(bar_rect, 2.0, color);
-
-                        // Count label
-                        ui.label(
-                            egui::RichText::new(format!("x{}", span.count))
-                                .small()
-                                .color(egui::Color32::GRAY),
-                        );
-                    });
-                }
-            });
-            ui.add_space(8.0);
-        }
 
         // ─── Idle time / Macro gap analysis ─────────────────────────────
         ui.add_space(8.0);
@@ -1117,8 +715,6 @@ impl App {
             replay,
             &cached.apm_data,
             &cached.build_orders,
-            &cached.unit_counts,
-            &cached.resource_estimates,
             &cached.idle_analyses,
         );
 
@@ -1391,7 +987,7 @@ impl eframe::App for App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label(
-                        egui::RichText::new("PathToBonjwa v0.5.0")
+                        egui::RichText::new("PathToBonjwa v0.7.0")
                             .size(16.0)
                             .color(BW_TEAL),
                     );

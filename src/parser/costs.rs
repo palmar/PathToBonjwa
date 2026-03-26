@@ -1,3 +1,6 @@
+// NOTE: Most cost functions are unused after stripping inferred metrics (v0.7.0).
+// Kept for future use when re-simulation is implemented.
+#![allow(dead_code)]
 /// Brood War unit/building cost data: (minerals, gas, supply)
 /// Supply is in half-units internally in BW; we store the display value (e.g. Zergling = 0.5).
 /// For supply providers we store negative supply to indicate they ADD supply.
