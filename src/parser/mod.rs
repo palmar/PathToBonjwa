@@ -777,6 +777,23 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Extract raw decompressed header (section 1) and command (section 2) bytes
+/// from a .rep file, for feeding into the OpenBW simulator.
+pub fn extract_raw_sections(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let mut reader = SectionReader::new(data)?;
+    let _replay_id = reader.read_section(Some(4))?;
+    let header = reader.read_section(Some(HEADER_SIZE))?;
+    if header.len() < HEADER_SIZE {
+        return Err(format!(
+            "Header too small: {} bytes (need {})",
+            header.len(),
+            HEADER_SIZE
+        ));
+    }
+    let commands = reader.read_section(None).unwrap_or_default();
+    Ok((header, commands))
+}
+
 pub fn parse_replay(data: &[u8]) -> Result<Replay, String> {
     let mut reader = SectionReader::new(data)?;
 

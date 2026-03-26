@@ -1,6 +1,4 @@
-mod analytics;
-mod parser;
-mod ui;
+use pathtobonjwa::ui;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

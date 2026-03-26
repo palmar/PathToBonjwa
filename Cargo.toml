@@ -11,3 +11,6 @@ egui_plot = "0.31"
 rfd = "0.15"
 chrono = "0.4"
 flate2 = "1"
+
+[build-dependencies]
+cc = "1"
