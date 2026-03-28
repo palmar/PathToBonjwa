@@ -1,10 +1,13 @@
+use std::path::PathBuf;
 use std::time::Instant;
 
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
 use crate::analytics::{self, ApmData, BuildOrderEntry, HotkeyStats, IdleAnalysis};
+use crate::library::{self, ReplayEntry};
 use crate::parser::{self, Replay};
+use crate::settings::Settings;
 
 // ─── BW-inspired color palette ──────────────────────────────────────────────
 /// Deep space black — main background
@@ -98,6 +101,7 @@ pub fn bw_visuals() -> egui::Visuals {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tab {
+    Library,
     Summary,
     Stats,
     Charts,
@@ -133,6 +137,15 @@ pub struct App {
     // UI state
     show_settings: bool,
     fonts_configured: bool,
+    // Settings + library
+    settings: Settings,
+    library_entries: Vec<ReplayEntry>,
+    library_scanning: bool,
+    /// Path of the currently selected replay from the library
+    selected_library_path: Option<PathBuf>,
+    /// Editable fields in the settings window
+    settings_folder_buf: String,
+    settings_name_buf: String,
 }
 
 struct CachedAnalytics {
@@ -145,19 +158,33 @@ struct CachedAnalytics {
 impl Default for App {
     fn default() -> Self {
         let start = Instant::now();
+        let settings = Settings::load();
+        let folder_buf = settings.replay_folder.clone().unwrap_or_default();
+        let name_buf = settings.player_name.clone().unwrap_or_default();
+        let has_folder = settings.advanced_mode && settings.replay_folder.is_some();
         let mut app = Self {
             replay: None,
             error: None,
             dropped_file: None,
-            active_tab: Tab::Summary,
+            active_tab: if has_folder { Tab::Library } else { Tab::Summary },
             cached: None,
             log_entries: Vec::new(),
             log_start: start,
             log_auto_scroll: true,
             show_settings: false,
             fonts_configured: false,
+            settings,
+            library_entries: Vec::new(),
+            library_scanning: false,
+            selected_library_path: None,
+            settings_folder_buf: folder_buf,
+            settings_name_buf: name_buf,
         };
         app.log(LogLevel::Info, "PathToBonjwa started");
+        // Auto-scan on startup if a folder is configured in advanced mode
+        if has_folder {
+            app.scan_library();
+        }
         app
     }
 }
@@ -169,6 +196,37 @@ impl App {
             level,
             message: message.into(),
         });
+    }
+
+    fn scan_library(&mut self) {
+        let folder = match self.settings.replay_folder.clone() {
+            Some(f) => f,
+            None => {
+                self.library_entries.clear();
+                return;
+            }
+        };
+        let path = std::path::Path::new(&folder);
+        if path.is_dir() {
+            self.library_scanning = true;
+            self.log(
+                LogLevel::Info,
+                format!("Scanning folder: {}", folder),
+            );
+            let player = self.settings.player_name.as_deref();
+            self.library_entries = library::scan_folder(path, player);
+            self.log(
+                LogLevel::Info,
+                format!("Found {} replays", self.library_entries.len()),
+            );
+            self.library_scanning = false;
+        } else {
+            self.log(
+                LogLevel::Warn,
+                format!("Replay folder not found: {}", folder),
+            );
+            self.library_entries.clear();
+        }
     }
 }
 
@@ -305,6 +363,183 @@ impl App {
             );
             ui.add_space(16.0);
         });
+    }
+
+    fn render_library(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+
+        if !self.settings.advanced_mode {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(
+                    egui::RichText::new("Advanced mode is required for the Replay Library")
+                        .size(16.0)
+                        .color(BW_TEXT),
+                );
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new("Enable it in Settings (File > Settings)")
+                        .color(BW_TEXT_DIM),
+                );
+            });
+            return;
+        }
+
+        if self.settings.replay_folder.is_none() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(
+                    egui::RichText::new("No replay folder configured")
+                        .size(16.0)
+                        .color(BW_TEXT),
+                );
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new("Set your replay folder in Settings (File > Settings)")
+                        .color(BW_TEXT_DIM),
+                );
+            });
+            return;
+        }
+
+        // Header with count and rescan button
+        ui.horizontal(|ui| {
+            bw_section_heading(ui, &format!("Replay Library ({} replays)", self.library_entries.len()));
+        });
+
+        ui.horizontal(|ui| {
+            if ui.button("Rescan Folder").clicked() {
+                self.scan_library();
+            }
+            if let Some(ref folder) = self.settings.replay_folder {
+                ui.label(
+                    egui::RichText::new(folder.as_str())
+                        .color(BW_TEXT_DIM)
+                        .small(),
+                );
+            }
+        });
+        ui.add_space(4.0);
+
+        if self.library_entries.is_empty() {
+            ui.label(
+                egui::RichText::new("No .rep files found in the configured folder.")
+                    .color(BW_TEXT_DIM),
+            );
+            return;
+        }
+
+        // Column headers
+        let row_height = 22.0;
+        egui::Grid::new("library_header")
+            .num_columns(6)
+            .spacing([12.0, 4.0])
+            .min_col_width(60.0)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Date").strong().color(BW_TEXT_HEADING));
+                ui.label(egui::RichText::new("Map").strong().color(BW_TEXT_HEADING));
+                ui.label(egui::RichText::new("Matchup").strong().color(BW_TEXT_HEADING));
+                ui.label(egui::RichText::new("Length").strong().color(BW_TEXT_HEADING));
+                ui.label(egui::RichText::new("Result").strong().color(BW_TEXT_HEADING));
+                ui.label(egui::RichText::new("File").strong().color(BW_TEXT_HEADING));
+                ui.end_row();
+            });
+
+        let rect = ui.available_rect_before_wrap();
+        let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
+        ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
+        ui.add_space(2.0);
+
+        // Replay list — load on click
+        let mut load_path: Option<PathBuf> = None;
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show_rows(ui, row_height, self.library_entries.len(), |ui, row_range| {
+                egui::Grid::new("library_rows")
+                    .num_columns(6)
+                    .spacing([12.0, 4.0])
+                    .min_col_width(60.0)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for i in row_range {
+                            let entry = &self.library_entries[i];
+                            let is_selected = self
+                                .selected_library_path
+                                .as_ref()
+                                .map(|p| p == &entry.path)
+                                .unwrap_or(false);
+
+                            let text_color = if is_selected { BW_TEAL_BRIGHT } else { BW_TEXT };
+
+                            // Date
+                            let date_resp = ui.add(egui::Label::new(
+                                egui::RichText::new(entry.date_str())
+                                    .monospace()
+                                    .color(text_color),
+                            ).sense(egui::Sense::click()));
+
+                            // Map
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(&entry.map_name).color(text_color),
+                            ).sense(egui::Sense::click()));
+
+                            // Matchup
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(&entry.matchup)
+                                    .strong()
+                                    .color(if is_selected { BW_TEAL_BRIGHT } else { BW_TEAL }),
+                            ).sense(egui::Sense::click()));
+
+                            // Length
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(entry.duration_str())
+                                    .monospace()
+                                    .color(text_color),
+                            ).sense(egui::Sense::click()));
+
+                            // Result
+                            let result_color = match entry.result.as_str() {
+                                "Win" => egui::Color32::from_rgb(100, 255, 100),
+                                "Loss" => egui::Color32::from_rgb(255, 100, 100),
+                                _ => BW_TEXT_DIM,
+                            };
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(&entry.result).color(result_color),
+                            ).sense(egui::Sense::click()));
+
+                            // File name
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(&entry.file_name)
+                                    .small()
+                                    .color(BW_TEXT_DIM),
+                            ).sense(egui::Sense::click()));
+
+                            // Handle click on any cell in this row
+                            if date_resp.clicked() {
+                                load_path = Some(entry.path.clone());
+                            }
+
+                            ui.end_row();
+                        }
+                    });
+            });
+
+        // Load replay if clicked
+        if let Some(path) = load_path {
+            self.selected_library_path = Some(path.clone());
+            match std::fs::read(&path) {
+                Ok(data) => {
+                    self.log(LogLevel::Info, format!("Opening from library: {}", path.display()));
+                    self.load_replay(data);
+                    self.active_tab = Tab::Summary;
+                }
+                Err(e) => {
+                    self.log(LogLevel::Error, format!("Failed to read {}: {}", path.display(), e));
+                    self.error = Some(format!("Failed to read file: {}", e));
+                }
+            }
+        }
     }
 
     fn render_summary(&self, ui: &mut egui::Ui, replay: &Replay) {
@@ -911,6 +1146,7 @@ impl eframe::App for App {
 
                 ui.horizontal(|ui| {
                     let tabs: &[(Tab, &str, bool)] = &[
+                        (Tab::Library, "Library", self.settings.advanced_mode),
                         (Tab::Summary, "Summary", self.replay.is_some()),
                         (Tab::Stats, "Stats", self.replay.is_some()),
                         (Tab::Charts, "Charts", self.replay.is_some()),
@@ -977,23 +1213,119 @@ impl eframe::App for App {
 
         // ─── Settings window ─────────────────────────────────────────
         if self.show_settings {
+            let mut close_settings = false;
+            let mut rescan = false;
+
             egui::Window::new("Settings")
                 .collapsible(false)
-                .resizable(false)
+                .resizable(true)
+                .default_width(420.0)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label(
-                        egui::RichText::new("PathToBonjwa v1.0.0")
+                        egui::RichText::new("PathToBonjwa v1.1.0")
                             .size(16.0)
                             .color(BW_TEAL),
                     );
-                    ui.add_space(8.0);
-                    ui.label("Settings will be available in a future update.");
                     ui.add_space(12.0);
-                    if ui.button("Close").clicked() {
-                        self.show_settings = false;
+
+                    // Advanced mode toggle
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Advanced Mode").strong());
+                        ui.checkbox(&mut self.settings.advanced_mode, "Enable");
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "Advanced mode enables the Replay Library with automatic folder scanning and player tracking.",
+                        )
+                        .small()
+                        .color(BW_TEXT_DIM),
+                    );
+                    ui.add_space(12.0);
+
+                    if self.settings.advanced_mode {
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // Replay folder
+                        ui.label(egui::RichText::new("Replay Folder").strong());
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings_folder_buf)
+                                    .desired_width(280.0)
+                                    .hint_text("Path to replay folder..."),
+                            );
+                            if ui.button("Browse...").clicked() {
+                                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                    self.settings_folder_buf = folder.display().to_string();
+                                }
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new(
+                                "All .rep files in this folder (and subfolders) will be indexed.",
+                            )
+                            .small()
+                            .color(BW_TEXT_DIM),
+                        );
+                        ui.add_space(12.0);
+
+                        // Player name
+                        ui.label(egui::RichText::new("Player Name").strong());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.settings_name_buf)
+                                .desired_width(280.0)
+                                .hint_text("Your in-game name..."),
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "Used to determine win/loss. Leave empty for undetermined results.",
+                            )
+                            .small()
+                            .color(BW_TEXT_DIM),
+                        );
+                        ui.add_space(12.0);
                     }
+
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Save & Close").clicked() {
+                            // Apply buffer values to settings
+                            if self.settings.advanced_mode {
+                                self.settings.replay_folder = if self.settings_folder_buf.is_empty() {
+                                    None
+                                } else {
+                                    Some(self.settings_folder_buf.clone())
+                                };
+                                self.settings.player_name = if self.settings_name_buf.is_empty() {
+                                    None
+                                } else {
+                                    Some(self.settings_name_buf.clone())
+                                };
+                            }
+                            self.settings.save();
+                            rescan = true;
+                            close_settings = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            // Reset buffers from settings
+                            self.settings_folder_buf =
+                                self.settings.replay_folder.clone().unwrap_or_default();
+                            self.settings_name_buf =
+                                self.settings.player_name.clone().unwrap_or_default();
+                            close_settings = true;
+                        }
+                    });
                 });
+
+            if close_settings {
+                self.show_settings = false;
+            }
+            if rescan && self.settings.advanced_mode && self.settings.replay_folder.is_some() {
+                self.scan_library();
+            }
         }
 
         egui::CentralPanel::default()
@@ -1003,7 +1335,9 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show(ctx, |ui| {
-                if self.active_tab == Tab::Logs {
+                if self.active_tab == Tab::Library {
+                    self.render_library(ui);
+                } else if self.active_tab == Tab::Logs {
                     self.render_logs(ui);
                 } else if let Some(ref error) = self.error {
                     ui.add_space(20.0);
@@ -1019,7 +1353,7 @@ impl eframe::App for App {
                         Tab::Stats => self.render_stats(ui, &replay),
                         Tab::Charts => self.render_charts(ui, &replay),
                         Tab::Analytics => self.render_analytics(ui, &replay),
-                        Tab::Logs => {} // handled above
+                        Tab::Library | Tab::Logs => {} // handled above
                     });
                 } else {
                     self.render_welcome(ui);

@@ -2391,6 +2391,9 @@ dependencies = [
  "egui_plot",
  "flate2",
  "rfd",
+ "serde",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

@@ -1,5 +1,7 @@
 mod analytics;
+mod library;
 mod parser;
+mod settings;
 mod ui;
 
 fn main() -> eframe::Result {

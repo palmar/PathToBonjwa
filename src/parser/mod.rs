@@ -809,6 +809,22 @@ pub fn parse_replay(data: &[u8]) -> Result<Replay, String> {
     Ok(replay)
 }
 
+/// Fast header-only parse — skips the commands section entirely.
+/// Returns a Replay with an empty `commands` vec, suitable for list views.
+pub fn parse_replay_header(data: &[u8]) -> Result<Replay, String> {
+    let mut reader = SectionReader::new(data)?;
+    let _replay_id = reader.read_section(Some(4))?;
+    let header_data = reader.read_section(Some(HEADER_SIZE))?;
+    if header_data.len() < HEADER_SIZE {
+        return Err(format!(
+            "Header too small: {} bytes (need {})",
+            header_data.len(),
+            HEADER_SIZE
+        ));
+    }
+    parse_header(&header_data)
+}
+
 fn parse_header(h: &[u8]) -> Result<Replay, String> {
     let engine = Engine::from_byte(h[0x00]);
     let frames = u32::from_le_bytes([h[0x01], h[0x02], h[0x03], h[0x04]]);
