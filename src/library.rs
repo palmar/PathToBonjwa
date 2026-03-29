@@ -119,6 +119,33 @@ fn determine_result(replay: &parser::Replay, player_name: &str) -> String {
                 "Win".to_string()
             }
         }
-        None => "Undetermined".to_string(),
+        None => {
+            // No LeaveGame event found. This typically means the replay was
+            // saved by the losing player and ends when they quit/disconnect.
+            // Heuristic: if the replay has commands and there are exactly 2
+            // human players, assume the recording player (the one whose
+            // replay this is) lost — the replay ends because they left.
+            let human_players: Vec<_> = replay
+                .players
+                .iter()
+                .filter(|p| matches!(p.player_type, parser::PlayerType::Human))
+                .collect();
+
+            if human_players.len() == 2 {
+                // The last player to issue a command is likely the one whose
+                // client recorded the replay. If that's our player, they lost
+                // (replay ended when they quit without a formal LeaveGame).
+                let last_cmd = replay.commands.iter().rev().find(|cmd| {
+                    human_players.iter().any(|p| p.player_id == cmd.player_id)
+                });
+                match last_cmd {
+                    Some(cmd) if cmd.player_id == my_player.player_id => "Loss".to_string(),
+                    Some(_) => "Win".to_string(),
+                    None => "Undetermined".to_string(),
+                }
+            } else {
+                "Undetermined".to_string()
+            }
+        }
     }
 }

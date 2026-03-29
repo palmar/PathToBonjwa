@@ -428,9 +428,22 @@ impl App {
         }
 
         // Column widths for alignment between header and body
-        let col_widths: [f32; 6] = [140.0, 160.0, 70.0, 60.0, 90.0, 180.0];
-        let col_spacing = 12.0;
-        let row_height = 24.0;
+        // Use available width to prevent overlap: allocate fixed columns
+        // then give remaining space to the File column.
+        let available_w = ui.available_width();
+        let fixed_widths: [f32; 5] = [145.0, 170.0, 75.0, 65.0, 95.0];
+        let col_spacing = 16.0;
+        let fixed_total: f32 = fixed_widths.iter().sum::<f32>() + col_spacing * 5.0;
+        let file_col_w = (available_w - fixed_total).max(120.0);
+        let col_widths: [f32; 6] = [
+            fixed_widths[0],
+            fixed_widths[1],
+            fixed_widths[2],
+            fixed_widths[3],
+            fixed_widths[4],
+            file_col_w,
+        ];
+        let row_height = 26.0;
 
         // Column headers — fixed widths to match data columns
         ui.horizontal(|ui| {
@@ -495,7 +508,7 @@ impl App {
                     let text_color = if is_selected {
                         BW_TEAL_BRIGHT
                     } else if is_hovered {
-                        egui::Color32::WHITE
+                        BW_TEXT
                     } else {
                         BW_TEXT
                     };
@@ -564,8 +577,12 @@ impl App {
                     );
                     x += col_widths[4] + col_spacing;
 
-                    // File
-                    ui.painter().text(
+                    // File — clip to column width to prevent overflow
+                    let file_clip = egui::Rect::from_min_size(
+                        egui::pos2(x, row_rect.min.y),
+                        egui::vec2(col_widths[5], row_height),
+                    );
+                    ui.painter().with_clip_rect(file_clip).text(
                         egui::pos2(x + 4.0, y_center),
                         egui::Align2::LEFT_CENTER,
                         &entry.file_name,
@@ -734,7 +751,7 @@ impl App {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
             let color = player
                 .map(|p| p.color.to_egui())
-                .unwrap_or(egui::Color32::WHITE);
+                .unwrap_or(BW_TEXT);
 
             egui::CollapsingHeader::new(
                 egui::RichText::new(format!("{} ({} actions)", name, entries.len()))
@@ -788,7 +805,7 @@ impl App {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
             let color = player
                 .map(|p| p.color.to_egui())
-                .unwrap_or(egui::Color32::WHITE);
+                .unwrap_or(BW_TEXT);
 
             let total: u32 = stats.groups.iter().map(|g| g.total()).sum();
             if total == 0 {
@@ -854,7 +871,7 @@ impl App {
                     let player = replay.players.iter().find(|p| p.player_id == *pid);
                     let color = player
                         .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
+                        .unwrap_or(BW_TEXT);
 
                     let points: PlotPoints =
                         apm.apm_per_minute.iter().map(|&(x, y)| [x, y]).collect();
@@ -880,7 +897,7 @@ impl App {
                     let player = replay.players.iter().find(|p| p.player_id == *pid);
                     let color = player
                         .map(|p| p.color.to_egui())
-                        .unwrap_or(egui::Color32::WHITE);
+                        .unwrap_or(BW_TEXT);
 
                     let points: PlotPoints =
                         apm.eapm_per_minute.iter().map(|&(x, y)| [x, y]).collect();
@@ -909,7 +926,7 @@ impl App {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
             let color = player
                 .map(|p| p.color.to_egui())
-                .unwrap_or(egui::Color32::WHITE);
+                .unwrap_or(BW_TEXT);
 
             egui::CollapsingHeader::new(
                 egui::RichText::new(format!(
@@ -1085,6 +1102,45 @@ impl eframe::App for App {
         // Configure fonts and base text size on first frame
         if !self.fonts_configured {
             self.fonts_configured = true;
+
+            // Load CJK font for Korean player names (common in BW replays)
+            let mut fonts = egui::FontDefinitions::default();
+            let cjk_font_paths: &[&str] = &[
+                // Windows
+                "C:\\Windows\\Fonts\\malgun.ttf",    // Malgun Gothic (Korean)
+                "C:\\Windows\\Fonts\\gulim.ttc",     // Gulim (Korean)
+                "C:\\Windows\\Fonts\\msyh.ttc",      // Microsoft YaHei
+                // Linux
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+                // macOS
+                "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                "/Library/Fonts/Arial Unicode.ttf",
+            ];
+            let mut cjk_loaded = false;
+            for path in cjk_font_paths {
+                if let Ok(font_data) = std::fs::read(path) {
+                    fonts.font_data.insert(
+                        "cjk".to_owned(),
+                        egui::FontData::from_owned(font_data).into(),
+                    );
+                    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                        family.push("cjk".to_owned());
+                    }
+                    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                        family.push("cjk".to_owned());
+                    }
+                    cjk_loaded = true;
+                    break;
+                }
+            }
+            ctx.set_fonts(fonts);
+
+            if !cjk_loaded {
+                self.log(LogLevel::Warn, "No CJK font found — Korean characters may not render correctly");
+            }
+
             let mut style = (*ctx.style()).clone();
             // Bump all text sizes slightly for better legibility
             style.text_styles.insert(
@@ -1172,7 +1228,7 @@ impl eframe::App for App {
 
                         // Settings button
                         if ui.add(egui::Button::new(
-                            egui::RichText::new("\u{2699} Settings").size(13.0).color(BW_TEXT),
+                            egui::RichText::new("Settings").size(13.0).color(BW_TEXT),
                         ).frame(false)).clicked() {
                             self.show_settings = !self.show_settings;
                         }
@@ -1181,7 +1237,7 @@ impl eframe::App for App {
 
                         // Open replay button
                         if ui.add(egui::Button::new(
-                            egui::RichText::new("\u{1F4C2} Open Replay").size(13.0).color(BW_CYAN),
+                            egui::RichText::new("Open Replay").size(13.0).color(BW_CYAN),
                         ).frame(false)).clicked() {
                             open_replay = true;
                         }
@@ -1198,7 +1254,7 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     // Library is a global tab; the rest are replay-specific
                     let tabs: &[(Tab, &str, bool)] = &[
-                        (Tab::Library, "\u{1F4DA} Library", self.settings.advanced_mode),
+                        (Tab::Library, "Library", self.settings.advanced_mode),
                         (Tab::Summary, "Summary", self.replay.is_some()),
                         (Tab::Stats, "Stats", self.replay.is_some()),
                         (Tab::Charts, "Charts", self.replay.is_some()),
