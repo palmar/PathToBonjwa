@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -70,6 +70,38 @@ jobs:
         with:
           name: windows-exe
           path: PathToBonjwa-latest.exe
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+
+      - name: Delete existing latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Create latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create latest \
+            --title "Latest Build" \
+            --notes "Automated build from \`main\` branch ($(date -u '+%Y-%m-%d %H:%M UTC')).
+
+          Commit: ${{ github.sha }}
+
+          Download the .exe below to get the latest version." \
+            --prerelease \
+            PathToBonjwa-latest.exe
 
   deploy:
     needs: build-windows
