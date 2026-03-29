@@ -1363,7 +1363,7 @@ impl eframe::App for App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label(
-                        egui::RichText::new("PathToBonjwa v1.1.1")
+                        egui::RichText::new("PathToBonjwa v1.1.2")
                             .size(16.0)
                             .color(BW_TEAL),
                     );

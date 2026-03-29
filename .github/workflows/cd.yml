@@ -62,14 +62,24 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Read version from Cargo.toml
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
+          echo "VERSION=$v" >> $env:GITHUB_OUTPUT
+
       - name: Rename binary
-        run: Copy-Item "target/release/pathtobonjwa.exe" "PathToBonjwa-latest.exe"
+        shell: pwsh
+        run: |
+          Copy-Item "target/release/pathtobonjwa.exe" "PathToBonjwa-v${{ steps.version.outputs.VERSION }}.exe"
+          Copy-Item "target/release/pathtobonjwa.exe" "PathToBonjwa-latest.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: PathToBonjwa-latest.exe
+          path: PathToBonjwa-*.exe
 
   release:
     needs: build-windows
@@ -84,47 +94,29 @@ jobs:
         with:
           name: windows-exe
 
+      - name: Read version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Delete existing latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release delete latest --yes --cleanup-tag 2>/dev/null || true
 
-      - name: Create latest release
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create latest \
-            --title "Latest Build" \
-            --notes "Automated build from \`main\` branch ($(date -u '+%Y-%m-%d %H:%M UTC')).
+          gh release create "latest" \
+            --title "PathToBonjwa v${{ steps.version.outputs.VERSION }} (latest)" \
+            --notes "Automated release from \`main\` branch.
 
-          Commit: ${{ github.sha }}
+          **Version:** v${{ steps.version.outputs.VERSION }}
+          **Commit:** [\`${GITHUB_SHA::8}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          **Built:** $(date -u '+%Y-%m-%d %H:%M UTC')
 
-          Download the .exe below to get the latest version." \
-            --prerelease \
-            PathToBonjwa-latest.exe
-
-  deploy:
-    needs: build-windows
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-exe
-
-      - name: Deploy exe and page to server
-        env:
-          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-        run: |
-          if [ -z "$DEPLOY_KEY" ]; then
-            echo "DEPLOY_SSH_KEY secret not set — skipping deploy"
-            exit 0
-          fi
-          mkdir -p ~/.ssh
-          echo "$DEPLOY_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H 10.85.8.110 >> ~/.ssh/known_hosts 2>/dev/null || true
-          scp -i ~/.ssh/id_deploy PathToBonjwa-latest.exe root@10.85.8.110:/pathtobonjwa/PathToBonjwa-latest.exe
-          scp -i ~/.ssh/id_deploy deploy/index.html root@10.85.8.110:/pathtobonjwa/index.html
+          Download \`PathToBonjwa-latest.exe\` below." \
+            PathToBonjwa-latest.exe \
+            "PathToBonjwa-v${{ steps.version.outputs.VERSION }}.exe"
