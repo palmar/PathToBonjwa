@@ -16,8 +16,6 @@ const BW_BG: egui::Color32 = egui::Color32::from_rgb(10, 14, 22);
 const BW_PANEL: egui::Color32 = egui::Color32::from_rgb(16, 24, 34);
 /// Panel/header darker stripe
 const BW_PANEL_DARK: egui::Color32 = egui::Color32::from_rgb(12, 18, 28);
-/// Menu bar background — subtle distinction from panel
-const BW_MENU_BAR: egui::Color32 = egui::Color32::from_rgb(18, 26, 38);
 /// Teal accent — primary highlight (BW console feel)
 const BW_TEAL: egui::Color32 = egui::Color32::from_rgb(0, 190, 170);
 /// Brighter teal for hover/active
@@ -429,100 +427,162 @@ impl App {
             return;
         }
 
-        // Column headers
-        let row_height = 22.0;
-        egui::Grid::new("library_header")
-            .num_columns(6)
-            .spacing([12.0, 4.0])
-            .min_col_width(60.0)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("Date").strong().color(BW_TEXT_HEADING));
-                ui.label(egui::RichText::new("Map").strong().color(BW_TEXT_HEADING));
-                ui.label(egui::RichText::new("Matchup").strong().color(BW_TEXT_HEADING));
-                ui.label(egui::RichText::new("Length").strong().color(BW_TEXT_HEADING));
-                ui.label(egui::RichText::new("Result").strong().color(BW_TEXT_HEADING));
-                ui.label(egui::RichText::new("File").strong().color(BW_TEXT_HEADING));
-                ui.end_row();
-            });
+        // Column widths for alignment between header and body
+        let col_widths: [f32; 6] = [140.0, 160.0, 70.0, 60.0, 90.0, 180.0];
+        let col_spacing = 12.0;
+        let row_height = 24.0;
+
+        // Column headers — fixed widths to match data columns
+        ui.horizontal(|ui| {
+            let headers = ["Date", "Map", "Matchup", "Length", "Result", "File"];
+            for (i, header) in headers.iter().enumerate() {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(col_widths[i], row_height),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(egui::RichText::new(*header).strong().color(BW_TEXT_HEADING));
+                    },
+                );
+                if i < headers.len() - 1 {
+                    ui.add_space(col_spacing);
+                }
+            }
+        });
 
         let rect = ui.available_rect_before_wrap();
         let line_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 1.0));
         ui.painter().rect_filled(line_rect, 0.0, BW_BORDER);
         ui.add_space(2.0);
 
-        // Replay list — load on click
+        // Replay list — with hover highlight and full-row click
         let mut load_path: Option<PathBuf> = None;
+        let hover_color = egui::Color32::from_rgba_premultiplied(0, 60, 55, 80);
+        let selected_color = egui::Color32::from_rgba_premultiplied(0, 60, 55, 140);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show_rows(ui, row_height, self.library_entries.len(), |ui, row_range| {
-                egui::Grid::new("library_rows")
-                    .num_columns(6)
-                    .spacing([12.0, 4.0])
-                    .min_col_width(60.0)
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for i in row_range {
-                            let entry = &self.library_entries[i];
-                            let is_selected = self
-                                .selected_library_path
-                                .as_ref()
-                                .map(|p| p == &entry.path)
-                                .unwrap_or(false);
+                for i in row_range {
+                    let entry = &self.library_entries[i];
+                    let is_selected = self
+                        .selected_library_path
+                        .as_ref()
+                        .map(|p| p == &entry.path)
+                        .unwrap_or(false);
 
-                            let text_color = if is_selected { BW_TEAL_BRIGHT } else { BW_TEXT };
+                    // Allocate the full row as an interactive area
+                    let (row_rect, row_resp) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), row_height),
+                        egui::Sense::click(),
+                    );
 
-                            // Date
-                            let date_resp = ui.add(egui::Label::new(
-                                egui::RichText::new(entry.date_str())
-                                    .monospace()
-                                    .color(text_color),
-                            ).sense(egui::Sense::click()));
+                    let is_hovered = row_resp.hovered();
 
-                            // Map
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(&entry.map_name).color(text_color),
-                            ).sense(egui::Sense::click()));
+                    // Draw row background for hover/selection
+                    if is_selected {
+                        ui.painter().rect_filled(row_rect, 0.0, selected_color);
+                    } else if is_hovered {
+                        ui.painter().rect_filled(row_rect, 0.0, hover_color);
+                    } else if i % 2 == 1 {
+                        // Subtle stripe for odd rows
+                        ui.painter().rect_filled(
+                            row_rect,
+                            0.0,
+                            egui::Color32::from_rgba_premultiplied(255, 255, 255, 4),
+                        );
+                    }
 
-                            // Matchup
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(&entry.matchup)
-                                    .strong()
-                                    .color(if is_selected { BW_TEAL_BRIGHT } else { BW_TEAL }),
-                            ).sense(egui::Sense::click()));
+                    let text_color = if is_selected {
+                        BW_TEAL_BRIGHT
+                    } else if is_hovered {
+                        egui::Color32::WHITE
+                    } else {
+                        BW_TEXT
+                    };
 
-                            // Length
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(entry.duration_str())
-                                    .monospace()
-                                    .color(text_color),
-                            ).sense(egui::Sense::click()));
+                    // Render cells at fixed positions within the row
+                    let mut x = row_rect.min.x;
+                    let y_center = row_rect.center().y;
 
-                            // Result
-                            let result_color = match entry.result.as_str() {
-                                "Win" => egui::Color32::from_rgb(100, 255, 100),
-                                "Loss" => egui::Color32::from_rgb(255, 100, 100),
-                                _ => BW_TEXT_DIM,
-                            };
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(&entry.result).color(result_color),
-                            ).sense(egui::Sense::click()));
+                    // Date
+                    let date_rect = egui::Rect::from_min_size(
+                        egui::pos2(x, row_rect.min.y),
+                        egui::vec2(col_widths[0], row_height),
+                    );
+                    ui.painter().text(
+                        egui::pos2(date_rect.min.x + 4.0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        entry.date_str(),
+                        egui::FontId::monospace(14.0),
+                        text_color,
+                    );
+                    x += col_widths[0] + col_spacing;
 
-                            // File name
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(&entry.file_name)
-                                    .small()
-                                    .color(BW_TEXT_DIM),
-                            ).sense(egui::Sense::click()));
+                    // Map
+                    ui.painter().text(
+                        egui::pos2(x + 4.0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        &entry.map_name,
+                        egui::FontId::proportional(15.0),
+                        text_color,
+                    );
+                    x += col_widths[1] + col_spacing;
 
-                            // Handle click on any cell in this row
-                            if date_resp.clicked() {
-                                load_path = Some(entry.path.clone());
-                            }
+                    // Matchup
+                    let matchup_color = if is_selected { BW_TEAL_BRIGHT } else { BW_TEAL };
+                    ui.painter().text(
+                        egui::pos2(x + 4.0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        &entry.matchup,
+                        egui::FontId::proportional(15.0),
+                        matchup_color,
+                    );
+                    x += col_widths[2] + col_spacing;
 
-                            ui.end_row();
-                        }
-                    });
+                    // Length
+                    ui.painter().text(
+                        egui::pos2(x + 4.0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        entry.duration_str(),
+                        egui::FontId::monospace(14.0),
+                        text_color,
+                    );
+                    x += col_widths[3] + col_spacing;
+
+                    // Result
+                    let result_color = match entry.result.as_str() {
+                        "Win" => egui::Color32::from_rgb(100, 255, 100),
+                        "Loss" => egui::Color32::from_rgb(255, 100, 100),
+                        _ => BW_TEXT_DIM,
+                    };
+                    ui.painter().text(
+                        egui::pos2(x + 4.0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        &entry.result,
+                        egui::FontId::proportional(15.0),
+                        result_color,
+                    );
+                    x += col_widths[4] + col_spacing;
+
+                    // File
+                    ui.painter().text(
+                        egui::pos2(x + 4.0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        &entry.file_name,
+                        egui::FontId::proportional(13.0),
+                        BW_TEXT_DIM,
+                    );
+
+                    // Handle click on entire row
+                    if row_resp.clicked() {
+                        load_path = Some(entry.path.clone());
+                    }
+
+                    // Show pointer cursor on hover
+                    if is_hovered {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                }
             });
 
         // Load replay if clicked
@@ -1078,49 +1138,12 @@ impl eframe::App for App {
             self.load_replay(data);
         }
 
-        // ─── Menu bar ────────────────────────────────────────────────
-        egui::TopBottomPanel::top("menu_bar")
-            .frame(
-                egui::Frame::NONE
-                    .fill(BW_MENU_BAR)
-                    .inner_margin(egui::Margin::symmetric(6, 2)),
-            )
-            .show(ctx, |ui| {
-                egui::menu::bar(ui, |ui| {
-                    ui.menu_button(
-                        egui::RichText::new("File").size(14.0).color(BW_TEXT),
-                        |ui| {
-                            if ui
-                                .button(egui::RichText::new("Open Replay...").size(14.0))
-                                .clicked()
-                            {
-                                open_replay = true;
-                                ui.close_menu();
-                            }
-                            ui.separator();
-                            if ui
-                                .button(egui::RichText::new("Settings").size(14.0))
-                                .clicked()
-                            {
-                                self.show_settings = !self.show_settings;
-                                ui.close_menu();
-                            }
-                            ui.separator();
-                            if ui.button(egui::RichText::new("Quit").size(14.0)).clicked() {
-                                quit_app = true;
-                                ui.close_menu();
-                            }
-                        },
-                    );
-                });
-            });
-
-        // ─── Header + tab bar ────────────────────────────────────────
+        // ─── Combined header + tab bar ─────────────────────────────
         egui::TopBottomPanel::top("top_panel")
             .frame(
                 egui::Frame::NONE
                     .fill(BW_PANEL)
-                    .inner_margin(egui::Margin::symmetric(10, 8)),
+                    .inner_margin(egui::Margin::symmetric(10, 6)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -1135,6 +1158,34 @@ impl eframe::App for App {
                             .size(12.0)
                             .color(BW_TEXT_DIM),
                     );
+
+                    // Right-aligned action buttons
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Quit button (subtle)
+                        if ui.add(egui::Button::new(
+                            egui::RichText::new("Quit").size(13.0).color(BW_TEXT_DIM),
+                        ).frame(false)).clicked() {
+                            quit_app = true;
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Settings button
+                        if ui.add(egui::Button::new(
+                            egui::RichText::new("\u{2699} Settings").size(13.0).color(BW_TEXT),
+                        ).frame(false)).clicked() {
+                            self.show_settings = !self.show_settings;
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Open replay button
+                        if ui.add(egui::Button::new(
+                            egui::RichText::new("\u{1F4C2} Open Replay").size(13.0).color(BW_CYAN),
+                        ).frame(false)).clicked() {
+                            open_replay = true;
+                        }
+                    });
                 });
 
                 // ─── Tab bar ─────────────────────────────────────────
@@ -1145,8 +1196,9 @@ impl eframe::App for App {
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
+                    // Library is a global tab; the rest are replay-specific
                     let tabs: &[(Tab, &str, bool)] = &[
-                        (Tab::Library, "Library", self.settings.advanced_mode),
+                        (Tab::Library, "\u{1F4DA} Library", self.settings.advanced_mode),
                         (Tab::Summary, "Summary", self.replay.is_some()),
                         (Tab::Stats, "Stats", self.replay.is_some()),
                         (Tab::Charts, "Charts", self.replay.is_some()),
@@ -1154,10 +1206,22 @@ impl eframe::App for App {
                         (Tab::Logs, "Logs", true),
                     ];
 
-                    for &(tab, label, enabled) in tabs {
+                    for (idx, &(tab, label, enabled)) in tabs.iter().enumerate() {
                         if !enabled {
                             continue;
                         }
+
+                        // Visual separator between Library and replay tabs
+                        if idx == 1 && self.settings.advanced_mode && self.replay.is_some() {
+                            let sep_rect = ui.available_rect_before_wrap();
+                            let sep = egui::Rect::from_min_size(
+                                egui::pos2(sep_rect.min.x, sep_rect.min.y + 4.0),
+                                egui::vec2(1.0, 20.0),
+                            );
+                            ui.painter().rect_filled(sep, 0.0, BW_BORDER);
+                            ui.add_space(6.0);
+                        }
+
                         let is_active = self.active_tab == tab;
                         let text = if is_active {
                             egui::RichText::new(label)

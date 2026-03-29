@@ -765,7 +765,22 @@ impl<'a> SectionReader<'a> {
 fn read_null_terminated(data: &[u8], max_len: usize) -> String {
     let len = max_len.min(data.len());
     let end = data.iter().take(len).position(|&b| b == 0).unwrap_or(len);
-    String::from_utf8_lossy(&data[..end]).to_string()
+    let bytes = &data[..end];
+
+    // Try UTF-8 first
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+
+    // Try EUC-KR (common for Korean BW replays)
+    let (decoded, _, had_errors) = encoding_rs::EUC_KR.decode(bytes);
+    if !had_errors {
+        return decoded.into_owned();
+    }
+
+    // Fall back to Windows-1252 (covers most Western European characters)
+    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+    decoded.into_owned()
 }
 
 fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>, String> {

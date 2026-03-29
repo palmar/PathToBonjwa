@@ -63,7 +63,9 @@ pub fn scan_folder(folder: &Path, player_name: Option<&str>) -> Vec<ReplayEntry>
 
 fn parse_entry(path: &Path, player_name: Option<&str>) -> Option<ReplayEntry> {
     let data = std::fs::read(path).ok()?;
-    let replay = parser::parse_replay_header(&data).ok()?;
+
+    // Full parse to get commands for win/loss detection
+    let replay = parser::parse_replay(&data).ok()?;
 
     let player_names: Vec<String> = replay.players.iter().map(|p| p.name.clone()).collect();
 
@@ -98,14 +100,25 @@ fn determine_result(replay: &parser::Replay, player_name: &str) -> String {
         .iter()
         .find(|p| p.name.to_lowercase().contains(&lower));
 
-    match my_player {
-        Some(_p) => {
-            // Without commands we can't detect LeaveGame — header only.
-            // We'd need to do a full parse to know who left first.
-            // For now: if the player is in the replay we note it, but can't
-            // determine win/loss from header alone.
-            "Undetermined".to_string()
+    let my_player = match my_player {
+        Some(p) => p,
+        None => return "Not in game".to_string(),
+    };
+
+    // In a 1v1, the player who sends LeaveGame first is the loser.
+    // Find the first LeaveGame command.
+    let first_leave = replay.commands.iter().find(|cmd| {
+        matches!(cmd.cmd, parser::CmdType::LeaveGame { .. })
+    });
+
+    match first_leave {
+        Some(cmd) => {
+            if cmd.player_id == my_player.player_id {
+                "Loss".to_string()
+            } else {
+                "Win".to_string()
+            }
         }
-        None => "Not in game".to_string(),
+        None => "Undetermined".to_string(),
     }
 }
