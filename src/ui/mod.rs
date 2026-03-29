@@ -164,7 +164,11 @@ impl Default for App {
             replay: None,
             error: None,
             dropped_file: None,
-            active_tab: if has_folder { Tab::Library } else { Tab::Summary },
+            active_tab: if has_folder {
+                Tab::Library
+            } else {
+                Tab::Summary
+            },
             cached: None,
             log_entries: Vec::new(),
             log_start: start,
@@ -207,10 +211,7 @@ impl App {
         let path = std::path::Path::new(&folder);
         if path.is_dir() {
             self.library_scanning = true;
-            self.log(
-                LogLevel::Info,
-                format!("Scanning folder: {}", folder),
-            );
+            self.log(LogLevel::Info, format!("Scanning folder: {}", folder));
             let player = self.settings.player_name.as_deref();
             self.library_entries = library::scan_folder(path, player);
             self.log(
@@ -402,7 +403,10 @@ impl App {
 
         // Header with count and rescan button
         ui.horizontal(|ui| {
-            bw_section_heading(ui, &format!("Replay Library ({} replays)", self.library_entries.len()));
+            bw_section_heading(
+                ui,
+                &format!("Replay Library ({} replays)", self.library_entries.len()),
+            );
         });
 
         ui.horizontal(|ui| {
@@ -474,145 +478,150 @@ impl App {
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
-            .show_rows(ui, row_height, self.library_entries.len(), |ui, row_range| {
-                for i in row_range {
-                    let entry = &self.library_entries[i];
-                    let is_selected = self
-                        .selected_library_path
-                        .as_ref()
-                        .map(|p| p == &entry.path)
-                        .unwrap_or(false);
+            .show_rows(
+                ui,
+                row_height,
+                self.library_entries.len(),
+                |ui, row_range| {
+                    for i in row_range {
+                        let entry = &self.library_entries[i];
+                        let is_selected = self
+                            .selected_library_path
+                            .as_ref()
+                            .map(|p| p == &entry.path)
+                            .unwrap_or(false);
 
-                    // Allocate the full row as an interactive area
-                    let (row_rect, row_resp) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), row_height),
-                        egui::Sense::click(),
-                    );
-
-                    let is_hovered = row_resp.hovered();
-
-                    // Draw row background for hover/selection
-                    if is_selected {
-                        ui.painter().rect_filled(row_rect, 0.0, selected_color);
-                    } else if is_hovered {
-                        ui.painter().rect_filled(row_rect, 0.0, hover_color);
-                    } else if i % 2 == 1 {
-                        // Subtle stripe for odd rows
-                        ui.painter().rect_filled(
-                            row_rect,
-                            0.0,
-                            egui::Color32::from_rgba_premultiplied(255, 255, 255, 4),
+                        // Allocate the full row as an interactive area
+                        let (row_rect, row_resp) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), row_height),
+                            egui::Sense::click(),
                         );
+
+                        let is_hovered = row_resp.hovered();
+
+                        // Draw row background for hover/selection
+                        if is_selected {
+                            ui.painter().rect_filled(row_rect, 0.0, selected_color);
+                        } else if is_hovered {
+                            ui.painter().rect_filled(row_rect, 0.0, hover_color);
+                        } else if i % 2 == 1 {
+                            // Subtle dark teal stripe for odd rows (theme-consistent)
+                            ui.painter().rect_filled(
+                                row_rect,
+                                0.0,
+                                egui::Color32::from_rgb(14, 20, 30),
+                            );
+                        }
+
+                        let text_color = if is_selected { BW_TEAL_BRIGHT } else { BW_TEXT };
+
+                        // Render cells at fixed positions within the row
+                        let mut x = row_rect.min.x;
+                        let y_center = row_rect.center().y;
+
+                        // Date
+                        let date_rect = egui::Rect::from_min_size(
+                            egui::pos2(x, row_rect.min.y),
+                            egui::vec2(col_widths[0], row_height),
+                        );
+                        ui.painter().text(
+                            egui::pos2(date_rect.min.x + 4.0, y_center),
+                            egui::Align2::LEFT_CENTER,
+                            entry.date_str(),
+                            egui::FontId::monospace(14.0),
+                            text_color,
+                        );
+                        x += col_widths[0] + col_spacing;
+
+                        // Map
+                        ui.painter().text(
+                            egui::pos2(x + 4.0, y_center),
+                            egui::Align2::LEFT_CENTER,
+                            &entry.map_name,
+                            egui::FontId::proportional(15.0),
+                            text_color,
+                        );
+                        x += col_widths[1] + col_spacing;
+
+                        // Matchup
+                        let matchup_color = if is_selected { BW_TEAL_BRIGHT } else { BW_TEAL };
+                        ui.painter().text(
+                            egui::pos2(x + 4.0, y_center),
+                            egui::Align2::LEFT_CENTER,
+                            &entry.matchup,
+                            egui::FontId::proportional(15.0),
+                            matchup_color,
+                        );
+                        x += col_widths[2] + col_spacing;
+
+                        // Length
+                        ui.painter().text(
+                            egui::pos2(x + 4.0, y_center),
+                            egui::Align2::LEFT_CENTER,
+                            entry.duration_str(),
+                            egui::FontId::monospace(14.0),
+                            text_color,
+                        );
+                        x += col_widths[3] + col_spacing;
+
+                        // Result
+                        let result_color = match entry.result.as_str() {
+                            "Win" => egui::Color32::from_rgb(100, 255, 100),
+                            "Loss" => egui::Color32::from_rgb(255, 100, 100),
+                            _ => BW_TEXT_DIM,
+                        };
+                        ui.painter().text(
+                            egui::pos2(x + 4.0, y_center),
+                            egui::Align2::LEFT_CENTER,
+                            &entry.result,
+                            egui::FontId::proportional(15.0),
+                            result_color,
+                        );
+                        x += col_widths[4] + col_spacing;
+
+                        // File — clip to column width to prevent overflow
+                        let file_clip = egui::Rect::from_min_size(
+                            egui::pos2(x, row_rect.min.y),
+                            egui::vec2(col_widths[5], row_height),
+                        );
+                        ui.painter().with_clip_rect(file_clip).text(
+                            egui::pos2(x + 4.0, y_center),
+                            egui::Align2::LEFT_CENTER,
+                            &entry.file_name,
+                            egui::FontId::proportional(13.0),
+                            BW_TEXT_DIM,
+                        );
+
+                        // Handle click on entire row
+                        if row_resp.clicked() {
+                            load_path = Some(entry.path.clone());
+                        }
+
+                        // Show pointer cursor on hover
+                        if is_hovered {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
                     }
-
-                    let text_color = if is_selected {
-                        BW_TEAL_BRIGHT
-                    } else if is_hovered {
-                        BW_TEXT
-                    } else {
-                        BW_TEXT
-                    };
-
-                    // Render cells at fixed positions within the row
-                    let mut x = row_rect.min.x;
-                    let y_center = row_rect.center().y;
-
-                    // Date
-                    let date_rect = egui::Rect::from_min_size(
-                        egui::pos2(x, row_rect.min.y),
-                        egui::vec2(col_widths[0], row_height),
-                    );
-                    ui.painter().text(
-                        egui::pos2(date_rect.min.x + 4.0, y_center),
-                        egui::Align2::LEFT_CENTER,
-                        entry.date_str(),
-                        egui::FontId::monospace(14.0),
-                        text_color,
-                    );
-                    x += col_widths[0] + col_spacing;
-
-                    // Map
-                    ui.painter().text(
-                        egui::pos2(x + 4.0, y_center),
-                        egui::Align2::LEFT_CENTER,
-                        &entry.map_name,
-                        egui::FontId::proportional(15.0),
-                        text_color,
-                    );
-                    x += col_widths[1] + col_spacing;
-
-                    // Matchup
-                    let matchup_color = if is_selected { BW_TEAL_BRIGHT } else { BW_TEAL };
-                    ui.painter().text(
-                        egui::pos2(x + 4.0, y_center),
-                        egui::Align2::LEFT_CENTER,
-                        &entry.matchup,
-                        egui::FontId::proportional(15.0),
-                        matchup_color,
-                    );
-                    x += col_widths[2] + col_spacing;
-
-                    // Length
-                    ui.painter().text(
-                        egui::pos2(x + 4.0, y_center),
-                        egui::Align2::LEFT_CENTER,
-                        entry.duration_str(),
-                        egui::FontId::monospace(14.0),
-                        text_color,
-                    );
-                    x += col_widths[3] + col_spacing;
-
-                    // Result
-                    let result_color = match entry.result.as_str() {
-                        "Win" => egui::Color32::from_rgb(100, 255, 100),
-                        "Loss" => egui::Color32::from_rgb(255, 100, 100),
-                        _ => BW_TEXT_DIM,
-                    };
-                    ui.painter().text(
-                        egui::pos2(x + 4.0, y_center),
-                        egui::Align2::LEFT_CENTER,
-                        &entry.result,
-                        egui::FontId::proportional(15.0),
-                        result_color,
-                    );
-                    x += col_widths[4] + col_spacing;
-
-                    // File — clip to column width to prevent overflow
-                    let file_clip = egui::Rect::from_min_size(
-                        egui::pos2(x, row_rect.min.y),
-                        egui::vec2(col_widths[5], row_height),
-                    );
-                    ui.painter().with_clip_rect(file_clip).text(
-                        egui::pos2(x + 4.0, y_center),
-                        egui::Align2::LEFT_CENTER,
-                        &entry.file_name,
-                        egui::FontId::proportional(13.0),
-                        BW_TEXT_DIM,
-                    );
-
-                    // Handle click on entire row
-                    if row_resp.clicked() {
-                        load_path = Some(entry.path.clone());
-                    }
-
-                    // Show pointer cursor on hover
-                    if is_hovered {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                }
-            });
+                },
+            );
 
         // Load replay if clicked
         if let Some(path) = load_path {
             self.selected_library_path = Some(path.clone());
             match std::fs::read(&path) {
                 Ok(data) => {
-                    self.log(LogLevel::Info, format!("Opening from library: {}", path.display()));
+                    self.log(
+                        LogLevel::Info,
+                        format!("Opening from library: {}", path.display()),
+                    );
                     self.load_replay(data);
                     self.active_tab = Tab::Summary;
                 }
                 Err(e) => {
-                    self.log(LogLevel::Error, format!("Failed to read {}: {}", path.display(), e));
+                    self.log(
+                        LogLevel::Error,
+                        format!("Failed to read {}: {}", path.display(), e),
+                    );
                     self.error = Some(format!("Failed to read file: {}", e));
                 }
             }
@@ -749,9 +758,7 @@ impl App {
 
         for (pid, name, entries) in &cached.build_orders {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player
-                .map(|p| p.color.to_egui())
-                .unwrap_or(BW_TEXT);
+            let color = player.map(|p| p.color.to_egui()).unwrap_or(BW_TEXT);
 
             egui::CollapsingHeader::new(
                 egui::RichText::new(format!("{} ({} actions)", name, entries.len()))
@@ -803,9 +810,7 @@ impl App {
 
         for (pid, name, stats) in &cached.hotkey_stats {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player
-                .map(|p| p.color.to_egui())
-                .unwrap_or(BW_TEXT);
+            let color = player.map(|p| p.color.to_egui()).unwrap_or(BW_TEXT);
 
             let total: u32 = stats.groups.iter().map(|g| g.total()).sum();
             if total == 0 {
@@ -869,9 +874,7 @@ impl App {
             .show(ui, |plot_ui| {
                 for (pid, name, apm) in &cached.apm_data {
                     let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(BW_TEXT);
+                    let color = player.map(|p| p.color.to_egui()).unwrap_or(BW_TEXT);
 
                     let points: PlotPoints =
                         apm.apm_per_minute.iter().map(|&(x, y)| [x, y]).collect();
@@ -895,9 +898,7 @@ impl App {
             .show(ui, |plot_ui| {
                 for (pid, name, apm) in &cached.apm_data {
                     let player = replay.players.iter().find(|p| p.player_id == *pid);
-                    let color = player
-                        .map(|p| p.color.to_egui())
-                        .unwrap_or(BW_TEXT);
+                    let color = player.map(|p| p.color.to_egui()).unwrap_or(BW_TEXT);
 
                     let points: PlotPoints =
                         apm.eapm_per_minute.iter().map(|&(x, y)| [x, y]).collect();
@@ -924,9 +925,7 @@ impl App {
 
         for (pid, name, idle) in &cached.idle_analyses {
             let player = replay.players.iter().find(|p| p.player_id == *pid);
-            let color = player
-                .map(|p| p.color.to_egui())
-                .unwrap_or(BW_TEXT);
+            let color = player.map(|p| p.color.to_egui()).unwrap_or(BW_TEXT);
 
             egui::CollapsingHeader::new(
                 egui::RichText::new(format!(
@@ -1107,9 +1106,9 @@ impl eframe::App for App {
             let mut fonts = egui::FontDefinitions::default();
             let cjk_font_paths: &[&str] = &[
                 // Windows
-                "C:\\Windows\\Fonts\\malgun.ttf",    // Malgun Gothic (Korean)
-                "C:\\Windows\\Fonts\\gulim.ttc",     // Gulim (Korean)
-                "C:\\Windows\\Fonts\\msyh.ttc",      // Microsoft YaHei
+                "C:\\Windows\\Fonts\\malgun.ttf", // Malgun Gothic (Korean)
+                "C:\\Windows\\Fonts\\gulim.ttc",  // Gulim (Korean)
+                "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei
                 // Linux
                 "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -1138,7 +1137,10 @@ impl eframe::App for App {
             ctx.set_fonts(fonts);
 
             if !cjk_loaded {
-                self.log(LogLevel::Warn, "No CJK font found — Korean characters may not render correctly");
+                self.log(
+                    LogLevel::Warn,
+                    "No CJK font found — Korean characters may not render correctly",
+                );
             }
 
             let mut style = (*ctx.style()).clone();
@@ -1218,27 +1220,45 @@ impl eframe::App for App {
                     // Right-aligned action buttons
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Quit button (subtle)
-                        if ui.add(egui::Button::new(
-                            egui::RichText::new("Quit").size(13.0).color(BW_TEXT_DIM),
-                        ).frame(false)).clicked() {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Quit").size(13.0).color(BW_TEXT_DIM),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
                             quit_app = true;
                         }
 
                         ui.add_space(4.0);
 
                         // Settings button
-                        if ui.add(egui::Button::new(
-                            egui::RichText::new("Settings").size(13.0).color(BW_TEXT),
-                        ).frame(false)).clicked() {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Settings").size(13.0).color(BW_TEXT),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
                             self.show_settings = !self.show_settings;
                         }
 
                         ui.add_space(4.0);
 
                         // Open replay button
-                        if ui.add(egui::Button::new(
-                            egui::RichText::new("Open Replay").size(13.0).color(BW_CYAN),
-                        ).frame(false)).clicked() {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Open Replay").size(13.0).color(BW_CYAN),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
                             open_replay = true;
                         }
                     });

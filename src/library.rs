@@ -14,6 +14,7 @@ pub struct ReplayEntry {
     pub timestamp: i64,
     /// "Win", "Loss", or "Undetermined"
     pub result: String,
+    #[allow(dead_code)]
     pub player_names: Vec<String>,
 }
 
@@ -107,9 +108,10 @@ fn determine_result(replay: &parser::Replay, player_name: &str) -> String {
 
     // In a 1v1, the player who sends LeaveGame first is the loser.
     // Find the first LeaveGame command.
-    let first_leave = replay.commands.iter().find(|cmd| {
-        matches!(cmd.cmd, parser::CmdType::LeaveGame { .. })
-    });
+    let first_leave = replay
+        .commands
+        .iter()
+        .find(|cmd| matches!(cmd.cmd, parser::CmdType::LeaveGame { .. }));
 
     match first_leave {
         Some(cmd) => {
@@ -135,9 +137,11 @@ fn determine_result(replay: &parser::Replay, player_name: &str) -> String {
                 // The last player to issue a command is likely the one whose
                 // client recorded the replay. If that's our player, they lost
                 // (replay ended when they quit without a formal LeaveGame).
-                let last_cmd = replay.commands.iter().rev().find(|cmd| {
-                    human_players.iter().any(|p| p.player_id == cmd.player_id)
-                });
+                let last_cmd = replay
+                    .commands
+                    .iter()
+                    .rev()
+                    .find(|cmd| human_players.iter().any(|p| p.player_id == cmd.player_id));
                 match last_cmd {
                     Some(cmd) if cmd.player_id == my_player.player_id => "Loss".to_string(),
                     Some(_) => "Win".to_string(),

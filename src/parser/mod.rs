@@ -826,6 +826,7 @@ pub fn parse_replay(data: &[u8]) -> Result<Replay, String> {
 
 /// Fast header-only parse — skips the commands section entirely.
 /// Returns a Replay with an empty `commands` vec, suitable for list views.
+#[allow(dead_code)]
 pub fn parse_replay_header(data: &[u8]) -> Result<Replay, String> {
     let mut reader = SectionReader::new(data)?;
     let _replay_id = reader.read_section(Some(4))?;
@@ -852,7 +853,7 @@ fn parse_header(h: &[u8]) -> Result<Replay, String> {
     let game_speed = GameSpeed::from_byte(h[0x3A]);
     let game_type = GameType::from_u16(u16::from_le_bytes([h[0x3C], h[0x3D]]));
     let host_name = read_null_terminated(&h[0x48..], 24);
-    let map_name = read_null_terminated(&h[0x61..], 26);
+    let map_name = read_null_terminated(&h[0x61..], 32);
 
     let player_data = &h[0xA1..];
     let color_data = &h[0x251..];

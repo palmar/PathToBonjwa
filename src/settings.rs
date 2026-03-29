@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 const CONFIG_FILE: &str = "pathtobonjwa.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
     /// Directory to scan recursively for .rep files
     #[serde(default)]
@@ -16,16 +16,6 @@ pub struct Settings {
     /// Advanced mode: shows player ID config + auto-folder scanning
     #[serde(default)]
     pub advanced_mode: bool,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            replay_folder: None,
-            player_name: None,
-            advanced_mode: false,
-        }
-    }
 }
 
 impl Settings {
