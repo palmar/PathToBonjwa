@@ -106,50 +106,111 @@ fn determine_result(replay: &parser::Replay, player_name: &str) -> String {
         None => return "Not in game".to_string(),
     };
 
-    // In a 1v1, the player who sends LeaveGame first is the loser.
-    // Find the first LeaveGame command.
-    let first_leave = replay
+    let human_players: Vec<_> = replay
+        .players
+        .iter()
+        .filter(|p| matches!(p.player_type, parser::PlayerType::Human))
+        .collect();
+
+    // Collect all LeaveGame commands
+    let leave_cmds: Vec<_> = replay
         .commands
         .iter()
-        .find(|cmd| matches!(cmd.cmd, parser::CmdType::LeaveGame { .. }));
+        .filter(|cmd| matches!(cmd.cmd, parser::CmdType::LeaveGame { .. }))
+        .collect();
 
-    match first_leave {
-        Some(cmd) => {
-            if cmd.player_id == my_player.player_id {
+    if !leave_cmds.is_empty() && human_players.len() == 2 {
+        let opponent = human_players
+            .iter()
+            .find(|p| p.player_id != my_player.player_id);
+
+        if let Some(opponent) = opponent {
+            // Check if only one player has a LeaveGame — they left the game (loser).
+            let my_leaves: Vec<_> = leave_cmds
+                .iter()
+                .filter(|c| c.player_id == my_player.player_id)
+                .collect();
+            let opp_leaves: Vec<_> = leave_cmds
+                .iter()
+                .filter(|c| c.player_id == opponent.player_id)
+                .collect();
+
+            match (my_leaves.first(), opp_leaves.first()) {
+                (Some(_), None) => return "Loss".to_string(), // Only I left
+                (None, Some(_)) => return "Win".to_string(),  // Only opponent left
+                (Some(my_leave), Some(opp_leave)) => {
+                    // Both players have LeaveGame. The one at the earlier frame
+                    // left first and lost.
+                    if my_leave.frame < opp_leave.frame {
+                        return "Loss".to_string();
+                    } else if opp_leave.frame < my_leave.frame {
+                        return "Win".to_string();
+                    }
+                    // Same frame — fall through to action-based heuristic
+                }
+                (None, None) => {} // LeaveGame from non-player? Fall through
+            }
+        }
+    } else if !leave_cmds.is_empty() {
+        // Non-1v1: the first player to LeaveGame with reason=1 (quit) lost
+        let first_quit = leave_cmds.iter().find(|cmd| {
+            if let parser::CmdType::LeaveGame { reason } = &cmd.cmd {
+                *reason == 1 || *reason == 6
+            } else {
+                false
+            }
+        });
+        if let Some(cmd) = first_quit {
+            return if cmd.player_id == my_player.player_id {
                 "Loss".to_string()
             } else {
                 "Win".to_string()
-            }
+            };
         }
-        None => {
-            // No LeaveGame event found. This typically means the replay was
-            // saved by the losing player and ends when they quit/disconnect.
-            // Heuristic: if the replay has commands and there are exactly 2
-            // human players, assume the recording player (the one whose
-            // replay this is) lost — the replay ends because they left.
-            let human_players: Vec<_> = replay
-                .players
-                .iter()
-                .filter(|p| matches!(p.player_type, parser::PlayerType::Human))
-                .collect();
+    }
 
-            if human_players.len() == 2 {
-                // The last player to issue a command is likely the one whose
-                // client recorded the replay. If that's our player, they lost
-                // (replay ended when they quit without a formal LeaveGame).
-                let last_cmd = replay
-                    .commands
-                    .iter()
-                    .rev()
-                    .find(|cmd| human_players.iter().any(|p| p.player_id == cmd.player_id));
-                match last_cmd {
-                    Some(cmd) if cmd.player_id == my_player.player_id => "Loss".to_string(),
-                    Some(_) => "Win".to_string(),
-                    None => "Undetermined".to_string(),
-                }
-            } else {
-                "Undetermined".to_string()
+    // Fallback: no LeaveGame or inconclusive. For 1v1, compare each player's
+    // last gameplay command. The player who stopped issuing commands first
+    // likely quit/disconnected (loser). Exclude KeepAlive/Chat/LeaveGame
+    // since those aren't active gameplay actions.
+    if human_players.len() == 2 {
+        let is_gameplay = |cmd: &parser::Command| -> bool {
+            !matches!(
+                cmd.cmd,
+                parser::CmdType::KeepAlive
+                    | parser::CmdType::Chat { .. }
+                    | parser::CmdType::LeaveGame { .. }
+                    | parser::CmdType::Other { .. }
+            )
+        };
+
+        let my_last_frame = replay
+            .commands
+            .iter()
+            .rev()
+            .find(|c| c.player_id == my_player.player_id && is_gameplay(c))
+            .map(|c| c.frame);
+
+        let opp_last_frame = replay
+            .commands
+            .iter()
+            .rev()
+            .find(|c| {
+                c.player_id != my_player.player_id
+                    && human_players.iter().any(|p| p.player_id == c.player_id)
+                    && is_gameplay(c)
+            })
+            .map(|c| c.frame);
+
+        if let (Some(my_frame), Some(opp_frame)) = (my_last_frame, opp_last_frame) {
+            // Require a meaningful gap (>= 24 frames ≈ 1 second) to be confident
+            if opp_frame + 24 <= my_frame {
+                return "Win".to_string(); // Opponent stopped first → I won
+            } else if my_frame + 24 <= opp_frame {
+                return "Loss".to_string(); // I stopped first → I lost
             }
         }
     }
+
+    "Undetermined".to_string()
 }

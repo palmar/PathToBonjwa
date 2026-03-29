@@ -767,6 +767,12 @@ fn read_null_terminated(data: &[u8], max_len: usize) -> String {
     let end = data.iter().take(len).position(|&b| b == 0).unwrap_or(len);
     let bytes = &data[..end];
 
+    // Strip BW text color codes (0x01-0x1F) before decoding.
+    // StarCraft embeds these control bytes in map names and other strings
+    // for in-game color formatting; they render as boxes in normal fonts.
+    let cleaned: Vec<u8> = bytes.iter().copied().filter(|&b| b >= 0x20).collect();
+    let bytes = &cleaned[..];
+
     // Try UTF-8 first
     if let Ok(s) = std::str::from_utf8(bytes) {
         return s.to_string();
